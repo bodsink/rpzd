@@ -167,6 +167,8 @@ db/
 - Linux (systemd untuk deployment production)
 - Akses SSH ke server production (untuk `make deploy`)
 
+> **Tested in production:** Debian 13 (Trixie)
+
 ---
 
 ## Konfigurasi
