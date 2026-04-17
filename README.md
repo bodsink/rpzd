@@ -346,19 +346,19 @@ systemctl reload dns-rpz-dns
 
 ```bash
 # Live log
-journalctl -u dns-rpz -f
+journalctl -u dns-rpz-dns -f
 
 # Live, hanya audit
-journalctl -u dns-rpz -f | grep audit
+journalctl -u dns-rpz-dns -f | grep audit
 
 # Live, hanya yang diblokir
-journalctl -u dns-rpz -f | grep result=blocked
+journalctl -u dns-rpz-dns -f | grep result=blocked
 
 # N baris terakhir
-journalctl -u dns-rpz --no-pager -n 50
+journalctl -u dns-rpz-dns --no-pager -n 50
 
 # Statistik: allowed vs blocked (5 menit terakhir)
-journalctl -u dns-rpz --since '5 minutes ago' \
+journalctl -u dns-rpz-dns --since '5 minutes ago' \
   | grep audit \
   | awk '{for(i=1;i<=NF;i++) if($i~/result=/) print $i}' \
   | sort | uniq -c | sort -rn
