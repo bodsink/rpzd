@@ -234,7 +234,7 @@ Pengaturan berikut dikelola melalui halaman **Settings** di dashboard dan disimp
 
 | Key | Default | Keterangan |
 |---|---|---|
-| `dns_upstream` | `8.8.8.8:53,8.8.4.4:53` | Upstream resolver — satu IP per baris di dashboard, port 53 otomatis. Gunakan `ip:port` untuk port lain. **Hot-reload** via SIGHUP ke `dns-rpz-dns` |
+| `dns_upstream` | `8.8.8.8, 8.8.4.4` | Upstream resolver. Di dashboard diisi satu IP per baris, port 53 otomatis. Gunakan `ip:port` untuk port non-standar. **Hot-reload** via SIGHUP ke `dns-rpz-dns` |
 | `dns_upstream_strategy` | `roundrobin` | Strategi distribusi query upstream: `roundrobin` / `random` / `race`. **Hot-reload** via SIGHUP |
 | `rpz_default_action` | `nxdomain` | Aksi default saat entri RPZ tidak punya CNAME: `nxdomain` / `nodata`. **Hot-reload** via SIGHUP |
 | `dns_cache_size` | `100000` | Jumlah entri cache response upstream (0 = nonaktif). **Memerlukan restart** agar berlaku |
