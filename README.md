@@ -202,8 +202,9 @@ cp dns-rpz.conf.example dns-rpz.conf
 
 ### Bootstrap config (`dns-rpz.conf`)
 
-Pengaturan ini dimuat saat startup dari file `.env`. Hanya berisi nilai minimum yang diperlukan
-sebelum koneksi database tersedia. Semua pengaturan lainnya dikelola via dashboard dan disimpan di DB.
+Satu file `.env` yang sama dipakai oleh kedua binary (`dns-rpz-dns` dan `dns-rpz-dashboard`).
+Hanya berisi nilai minimum yang diperlukan sebelum koneksi database tersedia.
+Semua pengaturan lainnya dikelola via dashboard dan disimpan di DB.
 Perubahan membutuhkan **restart penuh**.
 
 | Key | Default | Keterangan |
@@ -211,11 +212,7 @@ Perubahan membutuhkan **restart penuh**.
 | `DATABASE_DSN` | *(wajib)* | Connection string PostgreSQL |
 | `DATABASE_MAX_CONNS` | `20` | Maksimal koneksi DB dalam pool |
 | `DATABASE_MIN_CONNS` | `2` | Minimal koneksi DB idle |
-| `DNS_ADDRESS` | `0.0.0.0:53` | Alamat listen DNS (UDP+TCP) |
-| `HTTP_ADDRESS` | `0.0.0.0` | Bind interface untuk dashboard — port dikontrol via dashboard (DB). Override hanya jika perlu bind ke interface tertentu |
-| `TLS_CERT_FILE` | `./certs/server.crt` | Path file sertifikat TLS PEM. Di-generate otomatis (self-signed) jika belum ada |
-| `TLS_KEY_FILE` | `./certs/server.key` | Path file private key TLS PEM. Di-generate otomatis jika belum ada |
-| `PID_FILE` | `/run/dns-rpz/dns-rpz.pid` | Path file PID untuk `dns-rpz-dns` (digunakan dashboard untuk mengirim SIGHUP) |
+| `DNS_ADDRESS` | `0.0.0.0:53` | Alamat listen DNS server (UDP+TCP). Wajib untuk `dns-rpz-dns` |
 | `LOG_LEVEL` | `info` | Nilai awal log level sebelum pengaturan DB dimuat. Setelah DB terhubung, `log_level` dari dashboard akan menggantikan nilai ini |
 
 ### App settings (disimpan di PostgreSQL)
