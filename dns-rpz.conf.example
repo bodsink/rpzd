@@ -14,53 +14,9 @@ DATABASE_MIN_CONNS=2
 # -------------------------------------------------------
 DNS_ADDRESS=0.0.0.0:53
 
-
 # -------------------------------------------------------
-# TLS (HTTPS) for the dashboard — always enabled, cannot be disabled
-# -------------------------------------------------------
-# Paths to the TLS certificate and private key PEM files.
-# If these files do not exist, a self-signed certificate is generated automatically
-# on every startup. Override only if you supply your own certificate.
-#TLS_CERT_FILE=./certs/server.crt
-#TLS_KEY_FILE=./certs/server.key
-
-# -------------------------------------------------------
-# RPZ settings (optional, defaults shown)
-# -------------------------------------------------------
-# Upstream DNS resolvers for non-blocked queries (recursion)
-# Comma-separated list of IP:port
-DNS_UPSTREAM=8.8.8.8:53,8.8.4.4:53
-
-# Strategy for distributing queries across upstreams:
-#   roundrobin - rotate through servers in order (with fallback)
-#   random     - pick a random server each time (with fallback)
-#   race       - send to ALL servers simultaneously, use fastest response
-DNS_UPSTREAM_STRATEGY=roundrobin
-
-# Upstream response cache size (number of entries).
-# Caches NOERROR and NXDOMAIN responses from upstream; TTL is respected per RFC.
-# Set to 0 to disable caching. Default: 100000 (~60-80% hit rate at 10M queries/day).
-DNS_CACHE_SIZE=100000
-
-# Audit log: when enabled, every DNS query is logged at INFO level regardless of LOG_LEVEL.
-# Each log line contains: client IP, domain name, query type, and result (allowed/blocked/refused).
-# WARNING: at 10M queries/day this produces ~1.5GB/day of logs. Enable LOG_FILE=true and
-# configure logrotate (/etc/logrotate.d/dns-rpz) to rotate daily and keep 7 days.
-# Default: false
-DNS_AUDIT_LOG=false
-
-# Action applied when a domain matches an RPZ entry but has no explicit CNAME policy record:
-#   nxdomain - return NXDOMAIN (domain does not exist)
-#   nodata   - return NODATA (no records of the requested type)
-RPZ_DEFAULT_ACTION=nxdomain
-
-# -------------------------------------------------------
-# Logging (optional, defaults shown)
+# Logging (optional)
+# LOG_LEVEL controls the initial log level before DB settings are loaded.
+# Log format, file output, and rotation are managed via the dashboard.
 # -------------------------------------------------------
 LOG_LEVEL=info
-LOG_FORMAT=text
-
-# LOG_FILE: set to true to write logs to a file in addition to stdout
-# LOG_FILE_PATH: path to log file (default: dns-rpz.log), only used when LOG_FILE=true
-LOG_FILE=false
-#LOG_FILE_PATH=dns-rpz.log

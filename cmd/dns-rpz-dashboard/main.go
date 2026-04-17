@@ -111,6 +111,9 @@ func main() {
 		}
 	}()
 
+	// --- Apply log level from DB settings (overrides bootstrap config) ---
+	levelVar.Set(parseLevelVar(settings.LogLevel))
+
 	// --- Apply timezone from DB settings ---
 	if settings.Timezone != "" {
 		if err := api.ApplyTimezone(settings.Timezone); err != nil {
@@ -167,31 +170,29 @@ func main() {
 
 	logger.Info("dns-rpz-dashboard started", "addr", httpAddr, "tls", true)
 
-	// --- SIGHUP: reload sync interval from DB ---
+	// --- SIGHUP: reload sync interval and log settings from DB ---
 	reload := make(chan os.Signal, 1)
 	signal.Notify(reload, syscall.SIGHUP)
 	go func() {
 		for range reload {
 			logger.Info("SIGHUP received, reloading settings...")
 
-			newCfg, err := config.Load(cfgPath)
-			if err != nil {
-				logger.Error("config reload failed", "err", err)
-			} else {
-				newLevel := parseLevelVar(newCfg.Log.Level)
-				if levelVar.Level() != newLevel {
-					levelVar.Set(newLevel)
-					logger.Info("log level updated", "level", newCfg.Log.Level)
-				}
-			}
-
 			newSettings, err := db.LoadAppSettings(ctx)
 			if err != nil {
 				logger.Error("settings reload failed", "err", err)
-			} else if newSettings.SyncInterval != settings.SyncInterval {
-				settings.SyncInterval = newSettings.SyncInterval
-				scheduler.SetInterval(newSettings.SyncInterval)
-				logger.Info("sync interval updated", "interval_seconds", newSettings.SyncInterval)
+			} else {
+				// Apply log level from DB
+				newLevel := parseLevelVar(newSettings.LogLevel)
+				if levelVar.Level() != newLevel {
+					levelVar.Set(newLevel)
+					logger.Info("log level updated from db", "level", newSettings.LogLevel)
+				}
+				// Apply sync interval if changed
+				if newSettings.SyncInterval != settings.SyncInterval {
+					settings.SyncInterval = newSettings.SyncInterval
+					scheduler.SetInterval(newSettings.SyncInterval)
+					logger.Info("sync interval updated", "interval_seconds", newSettings.SyncInterval)
+				}
 			}
 
 			logger.Info("reload complete")

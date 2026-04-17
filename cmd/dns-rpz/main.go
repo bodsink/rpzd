@@ -67,12 +67,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Apply log level from DB (overrides bootstrap config)
+	levelVar.Set(parseLevelVar(settings.LogLevel))
+
 	// --- Write PID file so dns-rpz-dashboard can send SIGHUP after sync ---
 	if err := writePIDFile(cfg.Server.PIDFile); err != nil {
 		logger.Warn("failed to write pid file", "path", cfg.Server.PIDFile, "err", err)
 	} else {
 		defer os.Remove(cfg.Server.PIDFile)
 	}
+
+	// --- Register SIGHUP handler BEFORE the long index-load so an incoming
+	// SIGHUP from the dashboard does not kill the process with default behaviour.
+	// The handler goroutine is started now; it will safely no-op until the
+	// DNS server and handler variables are fully initialised below.
+	reload := make(chan os.Signal, 1)
+	signal.Notify(reload, syscall.SIGHUP)
 
 	// --- In-memory index ---
 	index := dnsserver.NewIndex(1_000_000)
@@ -110,20 +120,20 @@ func main() {
 
 	// --- DNS response cache ---
 	var responseCache *dnsserver.ResponseCache
-	if cfg.Server.DNSCacheSize > 0 {
-		responseCache, err = dnsserver.NewResponseCache(cfg.Server.DNSCacheSize)
+	if settings.DNSCacheSize > 0 {
+		responseCache, err = dnsserver.NewResponseCache(settings.DNSCacheSize)
 		if err != nil {
 			logger.Error("failed to create dns response cache", "err", err)
 			os.Exit(1)
 		}
-		logger.Info("dns response cache enabled", "size", cfg.Server.DNSCacheSize)
+		logger.Info("dns response cache enabled", "size", settings.DNSCacheSize)
 	}
 
 	// --- DNS server ---
 	upstreamServers := splitServers(settings.DNSUpstreams)
 	upstream := dnsserver.NewUpstream(upstreamServers, settings.DNSUpstreamStrat, responseCache)
-	handler := dnsserver.NewHandler(index, acl, cfg.Server.RPZDefaultAction, upstream, logger, cfg.Server.DNSAuditLog)
-	if cfg.Server.DNSAuditLog {
+	handler := dnsserver.NewHandler(index, acl, settings.RPZDefaultAction, upstream, logger, settings.AuditLog)
+	if settings.AuditLog {
 		logger.Info("dns audit log enabled: all queries will be logged at INFO level")
 	}
 	dnsServer := dnsserver.NewServer(cfg.Server.DNSAddress, handler, logger)
@@ -138,8 +148,6 @@ func main() {
 	logger.Info("dns-rpz started", "dns", cfg.Server.DNSAddress)
 
 	// --- SIGHUP: reload config file + ACL + RPZ index (used by systemctl reload) ---
-	reload := make(chan os.Signal, 1)
-	signal.Notify(reload, syscall.SIGHUP)
 	go func() {
 		for range reload {
 			logger.Info("SIGHUP received, reloading...")
@@ -157,11 +165,6 @@ func main() {
 					levelVar.Set(newLevel)
 					logger.Info("log level updated", "level", newCfg.Log.Level)
 				}
-				// DNS_AUDIT_LOG — apply immediately via atomic.Bool
-				if newCfg.Server.DNSAuditLog != handler.AuditLog() {
-					handler.SetAuditLog(newCfg.Server.DNSAuditLog)
-					logger.Info("audit log updated", "enabled", newCfg.Server.DNSAuditLog)
-				}
 				// Settings that require restart
 				if newCfg.Server.DNSAddress != cfg.Server.DNSAddress ||
 					newCfg.Database.DSN != cfg.Database.DSN {
@@ -169,7 +172,7 @@ func main() {
 				}
 			}
 
-			// Reload upstream from DB settings
+			// Reload upstream + audit log from DB settings
 			newSettings, err := db.LoadAppSettings(ctx)
 			if err != nil {
 				logger.Error("failed to reload app settings", "err", err)
@@ -177,6 +180,20 @@ func main() {
 				newUpstream := dnsserver.NewUpstream(splitServers(newSettings.DNSUpstreams), newSettings.DNSUpstreamStrat, responseCache)
 				handler.SetUpstream(newUpstream)
 				logger.Info("upstream reloaded", "servers", newSettings.DNSUpstreams, "strategy", newSettings.DNSUpstreamStrat)
+				// DNS audit log — apply immediately via atomic.Bool
+				if newSettings.AuditLog != handler.AuditLog() {
+					handler.SetAuditLog(newSettings.AuditLog)
+					logger.Info("audit log updated", "enabled", newSettings.AuditLog)
+				}				// RPZ default action — apply atomically
+				if newSettings.RPZDefaultAction != handler.DefaultAction() {
+					handler.SetDefaultAction(newSettings.RPZDefaultAction)
+					logger.Info("rpz default action updated", "action", newSettings.RPZDefaultAction)
+				}				// Log level from DB — overrides config file level
+				newLevel := parseLevelVar(newSettings.LogLevel)
+				if levelVar.Level() != newLevel {
+					levelVar.Set(newLevel)
+					logger.Info("log level updated from db", "level", newSettings.LogLevel)
+				}
 			}
 
 			// Reload ACL from DB
@@ -245,36 +262,10 @@ func splitServers(s string) []string {
 
 func newLogger(cfg config.LogConfig) (*slog.Logger, *slog.LevelVar) {
 	levelVar := &slog.LevelVar{}
-	switch cfg.Level {
-	case "debug":
-		levelVar.Set(slog.LevelDebug)
-	case "warn":
-		levelVar.Set(slog.LevelWarn)
-	case "error":
-		levelVar.Set(slog.LevelError)
-	default:
-		levelVar.Set(slog.LevelInfo)
-	}
+	levelVar.Set(parseLevelVar(cfg.Level))
 
 	opts := &slog.HandlerOptions{Level: levelVar}
-
-	var handler slog.Handler
-	if cfg.Format == "json" {
-		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, opts)
-	}
-
-	// Tee to file if LOG_FILE=true
-	if cfg.File && cfg.FilePath != "" {
-		f, err := os.OpenFile(cfg.FilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0640)
-		if err == nil {
-			handler = &multiHandler{
-				stdout: handler,
-				file:   newFileHandler(f, cfg.Format, opts),
-			}
-		}
-	}
+	handler := slog.Handler(slog.NewTextHandler(os.Stdout, opts))
 
 	return slog.New(handler), levelVar
 }

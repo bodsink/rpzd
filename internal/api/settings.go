@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,12 +21,18 @@ func (s *Server) handleSettingsPage(c *gin.Context) {
 		s.renderError(c, http.StatusInternalServerError, "Failed to load settings", err)
 		return
 	}
+	tab := c.Query("tab")
+	if tab != "general" && tab != "dns" {
+		tab = "dns"
+	}
 	c.HTML(http.StatusOK, "settings.html", gin.H{
-		"User":       currentUser(c),
-		"CSRFToken":  csrfToken(c),
-		"ActivePage": "settings",
-		"Settings":   settings,
-		"Saved":      c.Query("saved"),
+		"User":          currentUser(c),
+		"CSRFToken":     csrfToken(c),
+		"ActivePage":    "settings",
+		"ActiveSubPage": tab,
+		"Tab":           tab,
+		"Settings":      settings,
+		"Saved":         c.Query("saved"),
 	})
 }
 
@@ -35,10 +43,13 @@ func (s *Server) handleSettingsSaveSync(c *gin.Context) {
 	renderErr := func(msg string) {
 		settings, _ := s.db.LoadAppSettings(ctx)
 		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
-			"User":      currentUser(c),
-			"CSRFToken": csrfToken(c),
-			"Settings":  settings,
-			"ErrorSync": msg,
+			"User":          currentUser(c),
+			"CSRFToken":     csrfToken(c),
+			"ActivePage":    "settings",
+			"ActiveSubPage": "dns",
+			"Tab":           "dns",
+			"Settings":      settings,
+			"ErrorSync":     msg,
 		})
 	}
 
@@ -81,7 +92,7 @@ func (s *Server) handleSettingsSaveSync(c *gin.Context) {
 	}
 
 	s.logger.Info("sync settings updated", "user", currentUser(c).Username)
-	c.Redirect(http.StatusFound, "/settings?saved=sync")
+	c.Redirect(http.StatusFound, "/settings?tab=dns&saved=sync")
 }
 
 // handleSettingsSaveDNS saves DNS Upstream settings and signals the DNS process to reload.
@@ -91,10 +102,13 @@ func (s *Server) handleSettingsSaveDNS(c *gin.Context) {
 	renderErr := func(msg string) {
 		settings, _ := s.db.LoadAppSettings(ctx)
 		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
-			"User":      currentUser(c),
-			"CSRFToken": csrfToken(c),
-			"Settings":  settings,
-			"ErrorDNS":  msg,
+			"User":          currentUser(c),
+			"CSRFToken":     csrfToken(c),
+			"ActivePage":    "settings",
+			"ActiveSubPage": "dns",
+			"Tab":           "dns",
+			"Settings":      settings,
+			"ErrorDNS":      msg,
 		})
 	}
 
@@ -130,9 +144,29 @@ func (s *Server) handleSettingsSaveDNS(c *gin.Context) {
 		return
 	}
 
+	rpzDefaultAction := c.PostForm("rpz_default_action")
+	if rpzDefaultAction != "nxdomain" && rpzDefaultAction != "nodata" {
+		renderErr("RPZ default action must be 'nxdomain' or 'nodata'.")
+		return
+	}
+
+	dnsCacheSizeStr := strings.TrimSpace(c.PostForm("dns_cache_size"))
+	if n, err := strconv.Atoi(dnsCacheSizeStr); err != nil || n < 0 {
+		renderErr("DNS cache size must be a non-negative integer.")
+		return
+	}
+
+	auditLog := "false"
+	if c.PostForm("dns_audit_log") == "true" {
+		auditLog = "true"
+	}
+
 	kvs := map[string]string{
 		"dns_upstream":          upstreams,
 		"dns_upstream_strategy": strategy,
+		"rpz_default_action":    rpzDefaultAction,
+		"dns_cache_size":        dnsCacheSizeStr,
+		"dns_audit_log":         auditLog,
 	}
 	if err := saveSettingsMap(ctx, s, kvs); err != nil {
 		s.renderError(c, http.StatusInternalServerError, "Failed to save settings", err)
@@ -149,7 +183,7 @@ func (s *Server) handleSettingsSaveDNS(c *gin.Context) {
 	}
 
 	s.logger.Info("dns upstream settings updated", "user", currentUser(c).Username)
-	c.Redirect(http.StatusFound, "/settings?saved=dns")
+	c.Redirect(http.StatusFound, "/settings?tab=dns&saved=dns")
 }
 
 // handleSettingsSaveWeb saves Web Server settings (port).
@@ -159,10 +193,13 @@ func (s *Server) handleSettingsSaveWeb(c *gin.Context) {
 	renderErr := func(msg string) {
 		settings, _ := s.db.LoadAppSettings(ctx)
 		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
-			"User":      currentUser(c),
-			"CSRFToken": csrfToken(c),
-			"Settings":  settings,
-			"ErrorWeb":  msg,
+			"User":          currentUser(c),
+			"CSRFToken":     csrfToken(c),
+			"ActivePage":    "settings",
+			"ActiveSubPage": "general",
+			"Tab":           "general",
+			"Settings":      settings,
+			"ErrorWeb":      msg,
 		})
 	}
 
@@ -179,6 +216,7 @@ func (s *Server) handleSettingsSaveWeb(c *gin.Context) {
 
 	s.logger.Info("web server settings updated", "user", currentUser(c).Username, "port", webPort)
 
+
 	// Restart the web service in background so the redirect response is sent first.
 	if s.restartWeb != nil {
 		go func() {
@@ -189,7 +227,7 @@ func (s *Server) handleSettingsSaveWeb(c *gin.Context) {
 		}()
 	}
 
-	c.Redirect(http.StatusFound, "/settings?saved=web")
+	c.Redirect(http.StatusFound, "/settings?tab=general&saved=web")
 }
 
 // handleSettingsSaveSystem saves System settings (timezone).
@@ -199,10 +237,13 @@ func (s *Server) handleSettingsSaveSystem(c *gin.Context) {
 	renderErr := func(msg string) {
 		settings, _ := s.db.LoadAppSettings(ctx)
 		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
-			"User":        currentUser(c),
-			"CSRFToken":   csrfToken(c),
-			"Settings":    settings,
-			"ErrorSystem": msg,
+			"User":          currentUser(c),
+			"CSRFToken":     csrfToken(c),
+			"ActivePage":    "settings",
+			"ActiveSubPage": "general",
+			"Tab":           "general",
+			"Settings":      settings,
+			"ErrorSystem":   msg,
 		})
 	}
 
@@ -222,7 +263,7 @@ func (s *Server) handleSettingsSaveSystem(c *gin.Context) {
 	}
 
 	s.logger.Info("system settings updated", "user", currentUser(c).Username)
-	c.Redirect(http.StatusFound, "/settings?saved=system")
+	c.Redirect(http.StatusFound, "/settings?tab=general&saved=system")
 }
 
 // saveSettingsMap persists a key-value map to the settings store.
@@ -247,3 +288,174 @@ func ApplyTimezone(tz string) error {
 	}
 	return nil
 }
+
+// handleSettingsSaveLogging saves Logging settings to DB, writes logrotate config if enabled,
+// then signals both DNS and dashboard processes to reload.
+func (s *Server) handleSettingsSaveLogging(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	renderErr := func(msg string) {
+		settings, _ := s.db.LoadAppSettings(ctx)
+		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
+			"User":           currentUser(c),
+			"CSRFToken":      csrfToken(c),
+			"ActivePage":     "settings",
+			"ActiveSubPage":  "general",
+			"Tab":            "general",
+			"Settings":       settings,
+			"ErrorLogging":   msg,
+		})
+	}
+
+	logLevel := c.PostForm("log_level")
+	switch logLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		renderErr("Log level must be one of: debug, info, warn, error.")
+		return
+	}
+
+	logFormat := c.PostForm("log_format")
+	if logFormat != "text" && logFormat != "json" {
+		renderErr("Log format must be text or json.")
+		return
+	}
+
+	logFile := "false"
+	if c.PostForm("log_file") == "true" {
+		logFile = "true"
+	}
+
+	logFilePath := strings.TrimSpace(c.PostForm("log_file_path"))
+	if logFilePath == "" {
+		logFilePath = "/var/log/dns-rpz/dns-rpz.log"
+	}
+
+	logRotate := "false"
+	if c.PostForm("log_rotate") == "true" {
+		logRotate = "true"
+	}
+
+	logRotateSize := strings.TrimSpace(c.PostForm("log_rotate_size"))
+	if logRotateSize == "" {
+		logRotateSize = "100M"
+	}
+
+	logRotateKeep := strings.TrimSpace(c.PostForm("log_rotate_keep"))
+	if k, err := strconv.Atoi(logRotateKeep); err != nil || k < 1 {
+		renderErr("Log rotate keep must be a positive integer.")
+		return
+	}
+
+	kvs := map[string]string{
+		"log_level":        logLevel,
+		"log_format":       logFormat,
+		"log_file":         logFile,
+		"log_file_path":    logFilePath,
+		"log_rotate":       logRotate,
+		"log_rotate_size":  logRotateSize,
+		"log_rotate_keep":  logRotateKeep,
+	}
+	if err := saveSettingsMap(ctx, s, kvs); err != nil {
+		s.renderError(c, http.StatusInternalServerError, "Failed to save settings", err)
+		return
+	}
+
+	// Write or remove /etc/logrotate.d/dns-rpz
+	if logRotate == "true" && logFile == "true" {
+		if err := writeLogrotateConfig(logFilePath, logRotateSize, logRotateKeep); err != nil {
+			s.logger.Warn("failed to write logrotate config (requires root)", "err", err)
+		} else {
+			s.logger.Info("logrotate config written", "path", "/etc/logrotate.d/dns-rpz")
+		}
+	} else {
+		if err := os.Remove("/etc/logrotate.d/dns-rpz"); err != nil && !os.IsNotExist(err) {
+			s.logger.Warn("failed to remove logrotate config", "err", err)
+		}
+	}
+
+	// Ensure log directory exists if log_file is enabled
+	if logFile == "true" {
+		dir := filepath.Dir(logFilePath)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			s.logger.Warn("failed to create log directory", "dir", dir, "err", err)
+		}
+	}
+
+	// Signal DNS process and self to reload log settings
+	if s.dnsSignal != nil {
+		if err := s.dnsSignal(); err != nil {
+			s.logger.Warn("failed to signal dns process for logging reload", "err", err)
+		}
+	}
+	if s.selfReload != nil {
+		if err := s.selfReload(); err != nil {
+			s.logger.Warn("failed to signal self for logging reload", "err", err)
+		}
+	}
+
+	s.logger.Info("logging settings updated", "user", currentUser(c).Username)
+	c.Redirect(http.StatusFound, "/settings?tab=general&saved=logging")
+}
+
+// handleSettingsClearLog truncates the active log file configured in DB settings.
+func (s *Server) handleSettingsClearLog(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	settings, err := s.db.LoadAppSettings(ctx)
+	if err != nil {
+		s.renderError(c, http.StatusInternalServerError, "Failed to load settings", err)
+		return
+	}
+
+	if !settings.LogFile {
+		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
+			"User":           currentUser(c),
+			"CSRFToken":      csrfToken(c),
+			"ActivePage":     "settings",
+			"ActiveSubPage":  "general",
+			"Tab":            "general",
+			"Settings":       settings,
+			"ErrorLogging":   "Log file is not enabled. Enable log file output first.",
+		})
+		return
+	}
+
+	logFilePath := settings.LogFilePath
+	if logFilePath == "" {
+		logFilePath = "/var/log/dns-rpz/dns-rpz.log"
+	}
+
+	if err := os.Truncate(logFilePath, 0); err != nil {
+		if os.IsNotExist(err) {
+			// File doesn't exist yet — nothing to clear
+			c.Redirect(http.StatusFound, "/settings?tab=general&saved=log_cleared")
+			return
+		}
+		s.renderError(c, http.StatusInternalServerError, "Failed to clear log file", err)
+		return
+	}
+
+	s.logger.Info("log file cleared", "user", currentUser(c).Username, "path", logFilePath)
+	c.Redirect(http.StatusFound, "/settings?tab=general&saved=log_cleared")
+}
+
+// writeLogrotateConfig writes a logrotate config file for dns-rpz to /etc/logrotate.d/dns-rpz.
+func writeLogrotateConfig(logFilePath, size, keepStr string) error {
+	keep := 7
+	fmt.Sscanf(keepStr, "%d", &keep)
+	content := fmt.Sprintf(`%s {
+    daily
+    size %s
+    rotate %d
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su root adm
+}
+`, logFilePath, size, keep)
+	return os.WriteFile("/etc/logrotate.d/dns-rpz", []byte(content), 0644)
+}
+

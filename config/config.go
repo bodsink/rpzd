@@ -22,16 +22,11 @@ type BootstrapConfig struct {
 
 // ServerConfig holds the network listen addresses for the DNS and HTTP servers.
 type ServerConfig struct {
-	DNSAddress          string   // DNS_ADDRESS, e.g. "0.0.0.0:53"
-	HTTPAddress         string   // HTTP_ADDRESS, e.g. "0.0.0.0:8080"
-	PIDFile             string   // PID_FILE: path where dns-rpz-dns writes its PID (default: /run/dns-rpz/dns-rpz.pid)
-	RPZDefaultAction    string   // RPZ_DEFAULT_ACTION: nxdomain|nodata (default: nxdomain)
-	DNSUpstreams        []string // DNS_UPSTREAM: comma-separated list of upstream resolvers
-	DNSUpstreamStrategy string   // DNS_UPSTREAM_STRATEGY: roundrobin|random|race (default: roundrobin)
-	DNSCacheSize        int      // DNS_CACHE_SIZE: max cached upstream responses, 0 = disabled (default: 100000)
-	DNSAuditLog         bool     // DNS_AUDIT_LOG: log every query (client+name+type+result) at INFO level for audit (default: false)
-	TLSCertFile         string   // TLS_CERT_FILE: path to TLS certificate PEM file (default: ./certs/server.crt)
-	TLSKeyFile          string   // TLS_KEY_FILE: path to TLS private key PEM file (default: ./certs/server.key)
+	DNSAddress  string // DNS_ADDRESS, e.g. "0.0.0.0:53"
+	HTTPAddress string // HTTP_ADDRESS, e.g. "0.0.0.0:8080"
+	PIDFile     string // PID_FILE: path where dns-rpz-dns writes its PID (default: /run/dns-rpz/dns-rpz.pid)
+	TLSCertFile string // TLS_CERT_FILE: path to TLS certificate PEM file (default: ./certs/server.crt)
+	TLSKeyFile  string // TLS_KEY_FILE: path to TLS private key PEM file (default: ./certs/server.key)
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -41,12 +36,10 @@ type DatabaseConfig struct {
 	MinConns int32  // DATABASE_MIN_CONNS (default: 2)
 }
 
-// LogConfig holds logging configuration.
+// LogConfig holds minimal bootstrap logging configuration.
+// Log format, file output, and rotation are managed via the dashboard (stored in DB).
 type LogConfig struct {
-	Level    string // LOG_LEVEL: debug, info, warn, error (default: info)
-	Format   string // LOG_FORMAT: json, text (default: text)
-	File     bool   // LOG_FILE: true = write logs to file, false = stdout only (default: false)
-	FilePath string // LOG_FILE_PATH: path to log file (default: dns-rpz.log), only used when LOG_FILE=true
+	Level string // LOG_LEVEL: debug, info, warn, error (default: info)
 }
 
 // AppSettings holds application settings stored in the database,
@@ -94,30 +87,8 @@ func Load(path string) (*BootstrapConfig, error) {
 	cfg.Server.PIDFile = env["PID_FILE"]
 	cfg.Server.TLSCertFile = env["TLS_CERT_FILE"]
 	cfg.Server.TLSKeyFile = env["TLS_KEY_FILE"]
-	cfg.Server.RPZDefaultAction = env["RPZ_DEFAULT_ACTION"]
-	cfg.Server.DNSUpstreamStrategy = env["DNS_UPSTREAM_STRATEGY"]
-	if v, ok := env["DNS_UPSTREAM"]; ok && v != "" {
-		for _, u := range strings.Split(v, ",") {
-			if s := strings.TrimSpace(u); s != "" {
-				cfg.Server.DNSUpstreams = append(cfg.Server.DNSUpstreams, s)
-			}
-		}
-	}
 	cfg.Database.DSN = env["DATABASE_DSN"]
 	cfg.Log.Level = env["LOG_LEVEL"]
-	cfg.Log.Format = env["LOG_FORMAT"]
-	cfg.Log.FilePath = env["LOG_FILE_PATH"]
-
-	if v, ok := env["LOG_FILE"]; ok {
-		switch strings.ToLower(v) {
-		case "true", "1", "yes":
-			cfg.Log.File = true
-		case "false", "0", "no", "":
-			cfg.Log.File = false
-		default:
-			return nil, fmt.Errorf("LOG_FILE must be true or false")
-		}
-	}
 
 	if v, ok := env["DATABASE_MAX_CONNS"]; ok {
 		n, err := strconv.ParseInt(v, 10, 32)
@@ -133,24 +104,6 @@ func Load(path string) (*BootstrapConfig, error) {
 		}
 		cfg.Database.MinConns = int32(n)
 	}
-	if v, ok := env["DNS_CACHE_SIZE"]; ok {
-		n, err := strconv.Atoi(v)
-		if err != nil || n < 0 {
-			return nil, fmt.Errorf("DNS_CACHE_SIZE must be a non-negative integer")
-		}
-		cfg.Server.DNSCacheSize = n
-	}
-	if v, ok := env["DNS_AUDIT_LOG"]; ok {
-		switch strings.ToLower(v) {
-		case "true", "1", "yes":
-			cfg.Server.DNSAuditLog = true
-		case "false", "0", "no", "":
-			cfg.Server.DNSAuditLog = false
-		default:
-			return nil, fmt.Errorf("DNS_AUDIT_LOG must be true or false")
-		}
-	}
-
 	if err := cfg.validate(); err != nil {
 		return nil, fmt.Errorf("config validation: %w", err)
 	}
@@ -189,24 +142,6 @@ func (c *BootstrapConfig) setDefaults() {
 	}
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
-	}
-	if c.Log.Format == "" {
-		c.Log.Format = "text"
-	}
-	if c.Log.File && c.Log.FilePath == "" {
-		c.Log.FilePath = "dns-rpz.log"
-	}
-	if c.Server.RPZDefaultAction == "" {
-		c.Server.RPZDefaultAction = "nxdomain"
-	}
-	if len(c.Server.DNSUpstreams) == 0 {
-		c.Server.DNSUpstreams = []string{"8.8.8.8:53", "8.8.4.4:53"}
-	}
-	if c.Server.DNSUpstreamStrategy == "" {
-		c.Server.DNSUpstreamStrategy = "roundrobin"
-	}
-	if c.Server.DNSCacheSize == 0 {
-		c.Server.DNSCacheSize = 100_000
 	}
 	if c.Server.TLSCertFile == "" {
 		c.Server.TLSCertFile = "./certs/server.crt"

@@ -15,7 +15,7 @@ import (
 type Handler struct {
 	index         Indexer
 	acl           ACLChecker
-	defaultAction string
+	defaultAction atomic.Value // stores string: "nxdomain" or "nodata"
 	upstream      unsafe.Pointer // *Upstream, swapped atomically
 	logger        *slog.Logger
 	auditLog      atomic.Bool // when true, log every query at INFO level for audit purposes
@@ -36,11 +36,11 @@ type ACLChecker interface {
 // auditLog enables per-query INFO logging for audit purposes, independent of LOG_LEVEL.
 func NewHandler(index Indexer, acl ACLChecker, defaultAction string, upstream *Upstream, logger *slog.Logger, auditLog bool) *Handler {
 	h := &Handler{
-		index:         index,
-		acl:           acl,
-		defaultAction: defaultAction,
-		logger:        logger,
+		index:  index,
+		acl:    acl,
+		logger: logger,
 	}
+	h.defaultAction.Store(defaultAction)
 	atomic.StorePointer(&h.upstream, unsafe.Pointer(upstream))
 	h.auditLog.Store(auditLog)
 	return h
@@ -64,6 +64,19 @@ func (h *Handler) SetAuditLog(v bool) {
 // AuditLog returns the current audit log setting.
 func (h *Handler) AuditLog() bool {
 	return h.auditLog.Load()
+}
+
+// SetDefaultAction updates the RPZ default action at runtime. Safe to call concurrently.
+func (h *Handler) SetDefaultAction(action string) {
+	h.defaultAction.Store(action)
+}
+
+// DefaultAction returns the current RPZ default action.
+func (h *Handler) DefaultAction() string {
+	if v, ok := h.defaultAction.Load().(string); ok {
+		return v
+	}
+	return "nxdomain"
 }
 
 // ServeDNS handles a single DNS query.
@@ -165,7 +178,7 @@ func (h *Handler) lookupWildcard(qname string) (action string, ok bool) {
 func (h *Handler) applyRPZAction(w dns.ResponseWriter, r, m *dns.Msg, qname, action, clientIP string) {
 	// Empty action means no CNAME in zone — fall back to configured default
 	if action == "" {
-		action = h.defaultAction
+		action = h.DefaultAction()
 	}
 
 	h.logger.Info("rpz block", "client", clientIP, "name", qname, "action", action)

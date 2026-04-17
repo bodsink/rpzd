@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"html/template"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,26 @@ import (
 	"github.com/bodsink/dns-rpz/internal/store"
 	"github.com/bodsink/dns-rpz/internal/syncer"
 )
+
+// fmtNumPositive formats a non-negative int64 with dot thousands separators.
+// e.g. 5123456 → "5.123.456"
+func fmtNumPositive(n int64) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	result := make([]byte, 0, len(s)+(len(s)-1)/3)
+	mod := len(s) % 3
+	if mod == 0 {
+		mod = 3
+	}
+	result = append(result, s[:mod]...)
+	for i := mod; i < len(s); i += 3 {
+		result = append(result, '.')
+		result = append(result, s[i:i+3]...)
+	}
+	return string(result)
+}
 
 // Server holds all dependencies for the HTTP API server.
 type Server struct {
@@ -67,6 +88,22 @@ func NewServer(db *store.DB, zoneSyncer *syncer.ZoneSyncer, logger *slog.Logger,
 			return b
 		},
 		"int": func(v int64) int { return int(v) },
+		// fmtNum formats an integer with dot thousands separators (e.g. 5123456 → "5.123.456")
+		"fmtNum": func(v interface{}) string {
+			var n int64
+			switch val := v.(type) {
+			case int:
+				n = int64(val)
+			case int64:
+				n = val
+			default:
+				return fmt.Sprintf("%v", v)
+			}
+			if n < 0 {
+				return "-" + fmtNumPositive(-n)
+			}
+			return fmtNumPositive(n)
+		},
 		// upstreamsDisplay converts stored "8.8.8.8:53,1.1.1.1:53" to newline-separated IPs
 		// stripping the default port 53, for display in the upstream textarea.
 		"upstreamsDisplay": func(s string) string {
@@ -130,6 +167,8 @@ func NewServer(db *store.DB, zoneSyncer *syncer.ZoneSyncer, logger *slog.Logger,
 		auth.POST("/settings/dns", s.middlewareRequireAdmin(), s.middlewareCSRF(), s.handleSettingsSaveDNS)
 		auth.POST("/settings/web", s.middlewareRequireAdmin(), s.middlewareCSRF(), s.handleSettingsSaveWeb)
 		auth.POST("/settings/system", s.middlewareRequireAdmin(), s.middlewareCSRF(), s.handleSettingsSaveSystem)
+		auth.POST("/settings/logging", s.middlewareRequireAdmin(), s.middlewareCSRF(), s.handleSettingsSaveLogging)
+		auth.POST("/settings/logging/clear", s.middlewareRequireAdmin(), s.middlewareCSRF(), s.handleSettingsClearLog)
 
 		// IP Filters (ACL)
 		auth.GET("/ip-filters", s.middlewareRequireAdmin(), s.handleIPFilterList)

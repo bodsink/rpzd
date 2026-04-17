@@ -202,8 +202,9 @@ cp dns-rpz.conf.example dns-rpz.conf
 
 ### Bootstrap config (`dns-rpz.conf`)
 
-Pengaturan ini dimuat saat startup dari file `.env`. Perubahan membutuhkan **restart penuh**
-kecuali yang ditandai hot-reloadable.
+Pengaturan ini dimuat saat startup dari file `.env`. Hanya berisi nilai minimum yang diperlukan
+sebelum koneksi database tersedia. Semua pengaturan lainnya dikelola via dashboard dan disimpan di DB.
+Perubahan membutuhkan **restart penuh**.
 
 | Key | Default | Keterangan |
 |---|---|---|
@@ -214,30 +215,52 @@ kecuali yang ditandai hot-reloadable.
 | `HTTP_ADDRESS` | `0.0.0.0` | Bind interface untuk dashboard — port dikontrol via dashboard (DB). Override hanya jika perlu bind ke interface tertentu |
 | `TLS_CERT_FILE` | `./certs/server.crt` | Path file sertifikat TLS PEM. Di-generate otomatis (self-signed) jika belum ada |
 | `TLS_KEY_FILE` | `./certs/server.key` | Path file private key TLS PEM. Di-generate otomatis jika belum ada |
-| `DNS_CACHE_SIZE` | `100000` | Jumlah entri cache response upstream (0 = nonaktif) |
-| `RPZ_DEFAULT_ACTION` | `nxdomain` | Aksi default saat entri RPZ tidak punya CNAME: `nxdomain` / `nodata` |
-| `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` — **hot-reloadable** |
-| `LOG_FORMAT` | `text` | `text` / `json` |
-| `LOG_FILE` | `false` | Tulis log ke file selain stdout |
-| `LOG_FILE_PATH` | `dns-rpz.log` | Path file log (jika `LOG_FILE=true`) |
-| `DNS_AUDIT_LOG` | `false` | Log setiap query (client+nama+type+result) — **hot-reloadable** |
+| `PID_FILE` | `/run/dns-rpz/dns-rpz.pid` | Path file PID untuk `dns-rpz-dns` (digunakan dashboard untuk mengirim SIGHUP) |
+| `LOG_LEVEL` | `info` | Nilai awal log level sebelum pengaturan DB dimuat. Setelah DB terhubung, `log_level` dari dashboard akan menggantikan nilai ini |
 
 ### App settings (disimpan di PostgreSQL)
 
 Pengaturan berikut dikelola melalui halaman **Settings** di dashboard dan disimpan di tabel `settings` PostgreSQL. Perubahan langsung aktif tanpa restart, kecuali yang ditandai.
 
+**Sync & Mode**
+
 | Key | Default | Keterangan |
 |---|---|---|
-| `web_port` | `8080` | Port listen dashboard HTTPS. Service `dns-rpz-http` **restart otomatis** saat disimpan |
-| `timezone` | `UTC` | Timezone sistem Linux (format IANA, contoh: `Asia/Jakarta`). Diterapkan via `timedatectl` saat save dan startup |
-| `dns_upstream` | `8.8.8.8,8.8.4.4` | Upstream resolver — satu IP per baris di dashboard, port 53 otomatis. Gunakan `ip:port` untuk port lain. **Hot-reload** via SIGHUP ke `dns-rpz-dns` |
-| `dns_upstream_strategy` | `roundrobin` | Strategi distribusi query upstream: `roundrobin` / `random` / `race`. **Hot-reload** via SIGHUP |
 | `mode` | `slave` | Mode sinkronisasi global: `slave` (pull AXFR dari master) / `master` |
 | `master_ip` | — | IP master AXFR (mode slave) |
 | `master_port` | `53` | Port master AXFR |
 | `tsig_key` | — | Nama TSIG key (opsional) |
 | `tsig_secret` | — | TSIG secret base64 (opsional) |
 | `sync_interval` | `86400` | Interval sinkronisasi otomatis dalam detik (minimum: 60). **Hot-reload** (tidak perlu restart) |
+
+**DNS**
+
+| Key | Default | Keterangan |
+|---|---|---|
+| `dns_upstream` | `8.8.8.8:53,8.8.4.4:53` | Upstream resolver — satu IP per baris di dashboard, port 53 otomatis. Gunakan `ip:port` untuk port lain. **Hot-reload** via SIGHUP ke `dns-rpz-dns` |
+| `dns_upstream_strategy` | `roundrobin` | Strategi distribusi query upstream: `roundrobin` / `random` / `race`. **Hot-reload** via SIGHUP |
+| `rpz_default_action` | `nxdomain` | Aksi default saat entri RPZ tidak punya CNAME: `nxdomain` / `nodata`. **Hot-reload** via SIGHUP |
+| `dns_cache_size` | `100000` | Jumlah entri cache response upstream (0 = nonaktif). **Memerlukan restart** agar berlaku |
+| `dns_audit_log` | `false` | Log setiap query (client+nama+type+result). **Hot-reload** via SIGHUP |
+
+**Web & System**
+
+| Key | Default | Keterangan |
+|---|---|---|
+| `web_port` | `8080` | Port listen dashboard HTTPS. Service `dns-rpz-http` **restart otomatis** saat disimpan |
+| `timezone` | `UTC` | Timezone sistem Linux (format IANA, contoh: `Asia/Jakarta`). Diterapkan via `timedatectl` saat save dan startup |
+
+**Logging**
+
+| Key | Default | Keterangan |
+|---|---|---|
+| `log_level` | `info` | `debug` / `info` / `warn` / `error`. **Hot-reload** via SIGHUP ke kedua service |
+| `log_format` | `text` | Format output log: `text` / `json`. **Hot-reload** via SIGHUP |
+| `log_file` | `false` | Tulis log ke file selain stdout. **Hot-reload** via SIGHUP |
+| `log_file_path` | `/var/log/dns-rpz/dns-rpz.log` | Path file log (jika `log_file=true`). **Hot-reload** via SIGHUP |
+| `log_rotate` | `false` | Generate konfigurasi `/etc/logrotate.d/dns-rpz` secara otomatis |
+| `log_rotate_size` | `100M` | Ukuran file sebelum dirotasi (contoh: `100M`, `1G`) |
+| `log_rotate_keep` | `7` | Jumlah arsip rotasi yang disimpan |
 
 Pengaturan per-zone (master IP, TSIG, interval sync, dll.) juga dikelola di tabel `rpz_zones`
 dan dapat diedit di halaman detail zone.
@@ -299,26 +322,27 @@ systemctl reload dns-rpz
 ```
 
 Yang ikut di-reload saat `systemctl reload dns-rpz-dns`:
-- `LOG_LEVEL` — diterapkan langsung tanpa gangguan koneksi
-- `DNS_AUDIT_LOG` — di-toggle secara atomik
+- `log_level` — diterapkan langsung tanpa gangguan koneksi
+- `log_format`, `log_file`, `log_file_path` — logger di-swap secara atomik
+- `dns_audit_log` — di-toggle secara atomik
+- `rpz_default_action` — diterapkan secara atomik tanpa downtime
 - Daftar CIDR ACL — dimuat ulang dari PostgreSQL
 - RPZ index — reload penuh dari PostgreSQL (atomic swap, tanpa downtime)
 - `dns_upstream` + `dns_upstream_strategy` — upstream pool di-swap secara atomik
 
-Yang **masih butuh restart penuh**: `DNS_ADDRESS`, `DATABASE_DSN`, `DNS_CACHE_SIZE`, `TLS_CERT_FILE`, `TLS_KEY_FILE`
+Yang **masih butuh restart penuh**: `DNS_ADDRESS`, `DATABASE_DSN`, `dns_cache_size` (cache dialokasi saat startup), `TLS_CERT_FILE`, `TLS_KEY_FILE`
 
 > **`web_port`** tidak butuh restart manual — saat disimpan via dashboard, service `dns-rpz-http` restart otomatis.
 
 ### Aktifkan/nonaktifkan audit log saat runtime
 
-```bash
-# Aktifkan
-sed -i 's/DNS_AUDIT_LOG=false/DNS_AUDIT_LOG=true/' /opt/dns-rpz/dns-rpz.conf
-systemctl reload dns-rpz
+Audit log dikontrol via dashboard: **Settings → DNS → DNS Audit Log**. Perubahan disimpan ke DB
+dan service `dns-rpz-dns` di-signal otomatis untuk menerapkan setting baru tanpa restart.
 
-# Nonaktifkan
-sed -i 's/DNS_AUDIT_LOG=true/DNS_AUDIT_LOG=false/' /opt/dns-rpz/dns-rpz.conf
-systemctl reload dns-rpz
+Atau manual via SIGHUP setelah mengubah nilai di DB:
+
+```bash
+systemctl reload dns-rpz-dns
 ```
 
 ### Melihat log
@@ -345,24 +369,33 @@ journalctl -u dns-rpz --since '5 minutes ago' \
 
 ### Rotasi log
 
-```bash
-# /etc/logrotate.d/dns-rpz
+Konfigurasi logrotate dikelola via dashboard: **Settings → General → Logging**.
+Aktifkan toggle *Log Rotate*, atur ukuran file dan jumlah arsip, lalu klik *Save Logging Settings*.
+Dashboard akan otomatis menulis (atau menghapus) file `/etc/logrotate.d/dns-rpz` sesuai pengaturan.
+
+Contoh config yang di-generate:
+
+```
 /var/log/dns-rpz/dns-rpz.log {
     daily
+    size 100M
     rotate 7
     compress
     delaycompress
     missingok
     notifempty
-    create 0640 root root
-    postrotate
-        systemctl kill -s HUP dns-rpz 2>/dev/null || true
-    endscript
+    copytruncate
+    su root adm
 }
 ```
 
 > **Estimasi storage jika audit log aktif:** ~1,5 GB/hari pada 10 juta query/hari.
-> Kurangi `rotate 7` menjadi `rotate 3` jika storage terbatas.
+> Kurangi *Rotate Keep* menjadi `3` di dashboard jika storage terbatas.
+
+### Hapus log file
+
+Log file dapat di-truncate (dikosongkan) via dashboard: **Settings → General → Logging → Clear Log File**.
+Tombol tersedia di bagian *Log File Actions*. Hanya aktif jika *Log File* diaktifkan.
 
 ---
 
@@ -373,7 +406,7 @@ journalctl -u dns-rpz --since '5 minutes ago' \
 | `.` | NXDOMAIN | Domain tidak ada |
 | `*.` | NODATA | Nama ada, tapi tidak ada record untuk type yang diminta |
 | `walled.garden.` | Redirect | CNAME ke walled garden |
-| *(kosong / tanpa CNAME)* | Fallback ke `RPZ_DEFAULT_ACTION` | NXDOMAIN atau NODATA |
+| *(kosong / tanpa CNAME)* | Fallback ke `rpz_default_action` (setting DB) | NXDOMAIN atau NODATA |
 
 ---
 
@@ -449,9 +482,12 @@ Dibagi menjadi 4 section, masing-masing memiliki tombol **Save** tersendiri dan 
 | Section | Field | Efek saat disimpan |
 |---|---|---|
 | **Sync** | Mode (master/slave), Master IP & port, TSIG key/secret, Sync interval | Interval baru langsung aktif tanpa restart |
-| **DNS Upstream** | Daftar IP resolver (satu per baris, port 53 otomatis), strategi query (roundrobin / random / race) | Upstream pool di-swap atomik — tanpa restart DNS |
+| **DNS** | Upstream resolver, strategi (roundrobin/random/race), RPZ default action (nxdomain/nodata), DNS cache size, Audit log | Upstream + action + audit log di-reload atomik via SIGHUP; cache size berlaku setelah restart |
 | **Web Server** | Port dashboard HTTPS | Service `dns-rpz-http` restart otomatis |
 | **System** | Timezone Linux (IANA format) | Diterapkan via `timedatectl` |
+| **Logging** | Log level, format (text/json), log file toggle, path, logrotate toggle, ukuran rotate, jumlah arsip | Logger di-reload atomik via SIGHUP ke kedua service; logrotate config ditulis otomatis ke `/etc/logrotate.d/dns-rpz` |
+
+Di bagian Logging tersedia juga tombol **Clear Log File** untuk mengosongkan file log aktif tanpa perlu SSH ke server.
 
 #### Manajemen Pengguna (`/users`) *(admin only)*
 - Daftar semua akun pengguna dashboard
