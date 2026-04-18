@@ -112,6 +112,25 @@ func NewServer(db *store.DB, zoneSyncer *syncer.ZoneSyncer, logger *slog.Logger,
 			}
 			return fmtNumPositive(n)
 		},
+		// fmtTime formats a time value (time.Time, *time.Time, or interface{}) as
+		// "2006-01-02 15:04:05". Returns "—" for nil/zero values.
+		"fmtTime": func(v interface{}) string {
+			if v == nil {
+				return "\u2014"
+			}
+			type formatter interface {
+				Format(string) string
+			}
+			switch t := v.(type) {
+			case formatter:
+				if t == nil {
+					return "\u2014"
+				}
+				return t.Format("2006-01-02 15:04:05")
+			default:
+				return fmt.Sprintf("%v", v)
+			}
+		},
 		// upstreamsDisplay converts stored "8.8.8.8:53,1.1.1.1:53" to newline-separated IPs
 		// stripping the default port 53, for display in the upstream textarea.
 		"upstreamsDisplay": func(s string) string {

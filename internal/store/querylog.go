@@ -228,10 +228,14 @@ func (db *DB) GetQueryStats(ctx context.Context, since time.Time) (QueryStats, e
 		rows.Close()
 	}
 
-	// ── Top clients ────────────────────────────────────────────────────────────
+	// ── Top clients (only IPs covered by an enabled IP filter) ───────────────
 	rows, err = db.Pool.Query(ctx,
-		`SELECT client_ip::text, COUNT(*) AS cnt FROM dns_query_log
+		`SELECT host(client_ip), COUNT(*) AS cnt FROM dns_query_log q
 		 WHERE queried_at >= $1
+		   AND EXISTS (
+		         SELECT 1 FROM ip_filters f
+		         WHERE f.enabled AND q.client_ip <<= f.cidr
+		       )
 		 GROUP BY client_ip ORDER BY cnt DESC LIMIT 10`,
 		since,
 	)

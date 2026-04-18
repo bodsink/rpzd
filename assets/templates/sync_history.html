@@ -46,8 +46,8 @@
               {{else if eq .Status "failed"}}<span class="badge badge-error"><span class="badge-dot"></span>Failed</span>
               {{else}}<span class="badge badge-warning"><span class="badge-dot"></span>Running</span>{{end}}
             </td>
-            <td class="text-xs text-gray-500">{{.StartedAt}}</td>
-            <td class="text-xs text-gray-500">{{if .FinishedAt}}{{.FinishedAt}}{{else}}&mdash;{{end}}</td>
+            <td class="text-xs text-gray-500 tabular-nums">{{fmtTime .StartedAt}}</td>
+            <td class="text-xs text-gray-500 tabular-nums">{{if .FinishedAt}}{{fmtTime .FinishedAt}}{{else}}&mdash;{{end}}</td>
             <td class="text-right font-semibold" style="color:#16a34a">+{{.RecordsAdded}}</td>
             <td class="text-right font-semibold" style="color:#dc2626">-{{.RecordsRemoved}}</td>
             <td class="text-xs text-red-600 max-w-xs truncate" title="{{.ErrorMessage}}">
