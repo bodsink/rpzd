@@ -264,6 +264,18 @@ dan dapat diedit di halaman detail zone.
 
 ---
 
+## Prasyarat Produksi
+
+### Pendaftaran IP Publik ke Komdigi
+
+Sebelum melakukan deploy ke server produksi, **IP publik server harus sudah terdaftar** di portal integrasi Komdigi agar server diizinkan melakukan AXFR dari master RPZ Trustpositif:
+
+**[https://integrasipenapisan.komdigi.go.id/](https://integrasipenapisan.komdigi.go.id/)**
+
+Tanpa pendaftaran ini, koneksi AXFR ke master RPZ akan ditolak dan zone tidak akan tersinkronisasi.
+
+---
+
 ## Instalasi
 
 ### Build
