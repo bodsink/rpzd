@@ -139,8 +139,9 @@ func main() {
 	}
 
 	// --- Query statistics logger ---
-	queryLogger := store.NewBufferedQueryLogger(db, 10_000, logger)
+	queryLogger := store.NewBufferedQueryLogger(db, 100_000, logger)
 	handler.SetQueryLogger(queryLogger)
+	queryLogger.SetQueryCountFunc(handler.QueryCount)
 	go queryLogger.Run(ctx)
 	logger.Info("dns query statistics logger started")
 
@@ -210,11 +211,11 @@ func main() {
 				if newSettings.AuditLog != handler.AuditLog() {
 					handler.SetAuditLog(newSettings.AuditLog)
 					logger.Info("audit log updated", "enabled", newSettings.AuditLog)
-				}				// RPZ default action — apply atomically
+				} // RPZ default action — apply atomically
 				if newSettings.RPZDefaultAction != handler.DefaultAction() {
 					handler.SetDefaultAction(newSettings.RPZDefaultAction)
 					logger.Info("rpz default action updated", "action", newSettings.RPZDefaultAction)
-				}				// Log level from DB — overrides config file level
+				} // Log level from DB — overrides config file level
 				newLevel := parseLevelVar(newSettings.LogLevel)
 				if levelVar.Level() != newLevel {
 					levelVar.Set(newLevel)

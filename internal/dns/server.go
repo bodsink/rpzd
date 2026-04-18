@@ -19,13 +19,14 @@ type QueryLogger interface {
 
 // Handler handles incoming DNS queries with RPZ enforcement.
 type Handler struct {
-	index         Indexer
-	acl           ACLChecker
-	defaultAction atomic.Value  // stores string: "nxdomain" or "nodata"
-	upstream      unsafe.Pointer // *Upstream, swapped atomically
-	logger        *slog.Logger
-	auditLog      atomic.Bool  // when true, log every query at INFO level for audit purposes
-	queryLog      atomic.Value // stores QueryLogger; nil when disabled
+	index           Indexer
+	acl             ACLChecker
+	defaultAction   atomic.Value   // stores string: "nxdomain" or "nodata"
+	upstream        unsafe.Pointer // *Upstream, swapped atomically
+	logger          *slog.Logger
+	auditLog        atomic.Bool  // when true, log every query at INFO level for audit purposes
+	queryLog        atomic.Value // stores QueryLogger; nil when disabled
+	queriesReceived atomic.Int64 // total queries received since startup (resets on restart)
 }
 
 // Indexer is the interface for looking up RPZ entries.
@@ -104,6 +105,14 @@ func (h *Handler) DefaultAction() string {
 	return "nxdomain"
 }
 
+// QueryCount returns the total number of DNS queries received since startup.
+// This counter is incremented atomically for every query before any processing,
+// giving an accurate received count independent of the query log buffer.
+// Resets to zero on process restart.
+func (h *Handler) QueryCount() int64 {
+	return h.queriesReceived.Load()
+}
+
 // ServeDNS handles a single DNS query.
 // Implements dns.Handler interface.
 func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
@@ -117,6 +126,9 @@ func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		w.WriteMsg(m) //nolint:errcheck
 		return
 	}
+
+	// Count every valid query regardless of ACL/RPZ outcome or log buffer state.
+	h.queriesReceived.Add(1)
 
 	// Extract client IP for ACL check
 	clientIP, _, err := net.SplitHostPort(w.RemoteAddr().String())

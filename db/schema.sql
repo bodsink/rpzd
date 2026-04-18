@@ -137,6 +137,15 @@ CREATE INDEX IF NOT EXISTS idx_dns_query_log_client_ip  ON dns_query_log (client
 CREATE INDEX IF NOT EXISTS idx_dns_query_log_upstream   ON dns_query_log (upstream);
 
 -- -------------------------------------------------------
+-- Server Stats: live counters written by dns-rpz-dns process
+-- -------------------------------------------------------
+CREATE TABLE IF NOT EXISTS server_stats (
+    key         VARCHAR(64)  PRIMARY KEY,
+    value       BIGINT       NOT NULL DEFAULT 0,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- -------------------------------------------------------
 -- Default settings (first run)
 -- -------------------------------------------------------
 INSERT INTO settings (key, value) VALUES

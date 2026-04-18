@@ -27,9 +27,9 @@
   </div>
 
   <!-- ═══ Summary cards ═══════════════════════════════════════════════════════ -->
-  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+  <div class="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
 
-    <!-- Total Queries -->
+    <!-- Total Queries (Live = received by server since last restart) -->
     <div class="stat-card">
       <div class="stat-icon" style="background:linear-gradient(135deg,#6366f1,#4338ca);box-shadow:0 4px 14px rgba(99,102,241,.3)">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -37,7 +37,7 @@
         </svg>
       </div>
       <div>
-        <p class="stat-value">{{fmtNum .Stats.TotalQueries}}</p>
+        <p class="stat-value">{{fmtNum .Stats.LiveQueriesReceived}}</p>
         <p class="stat-label">Total DNS Queries</p>
       </div>
     </div>
@@ -51,20 +51,20 @@
       </div>
       <div>
         <p class="stat-value" style="color:#dc2626">{{fmtNum .Stats.TotalBlocked}}</p>
-        <p class="stat-label">Blocked Domains</p>
+        <p class="stat-label">Blocked</p>
       </div>
     </div>
 
-    <!-- Allowed -->
+    <!-- Refused -->
     <div class="stat-card">
-      <div class="stat-icon" style="background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 4px 14px rgba(16,185,129,.3)">
+      <div class="stat-icon" style="background:linear-gradient(135deg,#f97316,#ea580c);box-shadow:0 4px 14px rgba(249,115,22,.3)">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
       </div>
       <div>
-        <p class="stat-value" style="color:#059669">{{fmtNum .Stats.TotalAllowed}}</p>
-        <p class="stat-label">Allowed Queries</p>
+        <p class="stat-value" style="color:#ea580c">{{fmtNum .Stats.TotalRefused}}</p>
+        <p class="stat-label">Refused</p>
       </div>
     </div>
 
@@ -78,6 +78,32 @@
       <div>
         <p class="stat-value" style="color:#d97706">{{printf "%.1f" .Stats.BlockRate}}%</p>
         <p class="stat-label">Block Rate</p>
+      </div>
+    </div>
+
+    <!-- Cache Hits -->
+    <div class="stat-card">
+      <div class="stat-icon" style="background:linear-gradient(135deg,#06b6d4,#0891b2);box-shadow:0 4px 14px rgba(6,182,212,.3)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+      </div>
+      <div>
+        <p class="stat-value" style="color:#0891b2">{{fmtNum .Stats.CacheHits}}</p>
+        <p class="stat-label">Cache Hits</p>
+      </div>
+    </div>
+
+    <!-- Cache Hit Rate -->
+    <div class="stat-card">
+      <div class="stat-icon" style="background:linear-gradient(135deg,#0ea5e9,#0284c7);box-shadow:0 4px 14px rgba(14,165,233,.3)">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7zm0 5h16"/>
+        </svg>
+      </div>
+      <div>
+        <p class="stat-value" style="color:#0284c7">{{printf "%.1f" .Stats.CacheHitRate}}%</p>
+        <p class="stat-label">Cache Hit Rate</p>
       </div>
     </div>
 

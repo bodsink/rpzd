@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,9 +25,18 @@ type QueryLogEntry struct {
 // BufferedQueryLogger buffers DNS query log entries and flushes to the database in batches.
 // It implements the dns.QueryLogger interface.
 type BufferedQueryLogger struct {
-	db     *DB
-	ch     chan QueryLogEntry
-	logger *slog.Logger
+	db           *DB
+	ch           chan QueryLogEntry
+	logger       *slog.Logger
+	dropped      atomic.Int64
+	queryCountFn atomic.Value // stores func() int64; nil when not set
+}
+
+// SetQueryCountFunc sets a function that returns the total DNS queries received
+// by the DNS server process since startup. Called on every flush to persist the
+// count to the server_stats table so the dashboard can display it.
+func (b *BufferedQueryLogger) SetQueryCountFunc(fn func() int64) {
+	b.queryCountFn.Store(fn)
 }
 
 // NewBufferedQueryLogger creates a new BufferedQueryLogger with the given channel capacity.
@@ -52,41 +62,68 @@ func (b *BufferedQueryLogger) LogQuery(clientIP, domain, qtype, result, upstream
 	}:
 	default:
 		// Buffer full — drop to avoid blocking the DNS query path.
+		b.dropped.Add(1)
 	}
 }
 
 // Run starts the background goroutine that flushes buffered entries to the DB.
 // Returns when ctx is cancelled, flushing any remaining entries first.
+//
+// Design: the goroutine drains the ENTIRE channel into buf before each flush so
+// that in-flight entries are not left in the channel while the goroutine is
+// blocked inside the PostgreSQL COPY call. This prevents the channel from
+// filling up and silently dropping entries under high query rates.
 func (b *BufferedQueryLogger) Run(ctx context.Context) {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	buf := make([]QueryLogEntry, 0, 500)
+	buf := make([]QueryLogEntry, 0, 5000)
+
+	// drainAvailable drains all currently buffered channel entries into buf
+	// without blocking. Must be called before every flush.
+	drainAvailable := func() {
+		for {
+			select {
+			case e := <-b.ch:
+				buf = append(buf, e)
+			default:
+				return
+			}
+		}
+	}
+
+	doFlush := func(flushCtx context.Context) {
+		drainAvailable()
+		if len(buf) == 0 {
+			return
+		}
+		if d := b.dropped.Swap(0); d > 0 {
+			b.logger.Warn("query log entries dropped: channel was full",
+				"dropped", d,
+				"hint", "consider increasing buffer size or reducing query volume")
+		}
+		b.flush(flushCtx, buf)
+		buf = buf[:0]
+		// Persist live query counter so the dashboard can display true received count.
+		if fn, ok := b.queryCountFn.Load().(func() int64); ok && fn != nil {
+			if err := b.db.UpsertServerStat(flushCtx, "dns_queries_received", fn()); err != nil {
+				b.logger.Warn("failed to persist query counter", "err", err)
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
-			// Drain remaining buffered entries before exit.
-			draining := true
-			for draining {
-				select {
-				case e := <-b.ch:
-					buf = append(buf, e)
-				default:
-					draining = false
-				}
-			}
-			b.flush(context.Background(), buf)
+			doFlush(context.Background())
 			return
+		case <-ticker.C:
+			doFlush(ctx)
 		case e := <-b.ch:
 			buf = append(buf, e)
-			if len(buf) >= 500 {
-				b.flush(ctx, buf)
-				buf = buf[:0]
-			}
-		case <-ticker.C:
-			if len(buf) > 0 {
-				b.flush(ctx, buf)
-				buf = buf[:0]
+			drainAvailable()
+			if len(buf) >= 2000 {
+				doFlush(ctx)
 			}
 		}
 	}
@@ -127,6 +164,37 @@ func (db *DB) InsertQueryLogBatch(ctx context.Context, entries []QueryLogEntry) 
 	return nil
 }
 
+// UpsertServerStat upserts a named integer counter in the server_stats table.
+// Used by the DNS process to persist live counters for the dashboard.
+func (db *DB) UpsertServerStat(ctx context.Context, key string, value int64) error {
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO server_stats (key, value, updated_at)
+		 VALUES ($1, $2, NOW())
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+		key, value,
+	)
+	if err != nil {
+		return fmt.Errorf("upsert server stat %q: %w", key, err)
+	}
+	return nil
+}
+
+// GetServerStat reads a named counter from server_stats.
+// Returns 0, nil when the key does not exist.
+func (db *DB) GetServerStat(ctx context.Context, key string) (int64, error) {
+	var value int64
+	err := db.Pool.QueryRow(ctx,
+		`SELECT value FROM server_stats WHERE key = $1`, key,
+	).Scan(&value)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("get server stat %q: %w", key, err)
+	}
+	return value, nil
+}
+
 // CleanupOldQueryLogs deletes query logs older than retentionDays.
 // Safe to call periodically to prevent unbounded table growth.
 func (db *DB) CleanupOldQueryLogs(ctx context.Context, retentionDays int) (int64, error) {
@@ -163,16 +231,19 @@ type UpstreamStat struct {
 
 // QueryStats holds aggregate DNS query statistics for a time period.
 type QueryStats struct {
-	TotalQueries      int64
-	TotalBlocked      int64
-	TotalAllowed      int64
-	TotalRefused      int64
-	BlockRate         float64
-	AvgResponseTimeMs float64
-	TopDomains        []DomainCount
-	TopClients        []ClientCount
-	TopBlocks         []DomainCount
-	UpstreamStats     []UpstreamStat
+	TotalQueries        int64
+	TotalBlocked        int64
+	TotalAllowed        int64
+	TotalRefused        int64
+	CacheHits           int64
+	BlockRate           float64
+	CacheHitRate        float64
+	AvgResponseTimeMs   float64
+	LiveQueriesReceived int64 // total queries received by DNS process since last restart (from server_stats)
+	TopDomains          []DomainCount
+	TopClients          []ClientCount
+	TopBlocks           []DomainCount
+	UpstreamStats       []UpstreamStat
 }
 
 // GetQueryStats returns aggregate DNS query statistics since the given time.
@@ -209,6 +280,18 @@ func (db *DB) GetQueryStats(ctx context.Context, since time.Time) (QueryStats, e
 	}
 	if s.TotalQueries > 0 {
 		s.BlockRate = float64(s.TotalBlocked) / float64(s.TotalQueries) * 100
+	}
+
+	// ── Cache hits (allowed queries answered from local response cache) ─────────
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM dns_query_log
+		 WHERE queried_at >= $1 AND upstream = 'cache'`,
+		since,
+	).Scan(&s.CacheHits); err != nil {
+		s.CacheHits = 0
+	}
+	if s.TotalAllowed > 0 {
+		s.CacheHitRate = float64(s.CacheHits) / float64(s.TotalAllowed) * 100
 	}
 
 	// ── Top domains (all results) ──────────────────────────────────────────────
@@ -296,6 +379,11 @@ func (db *DB) GetQueryStats(ctx context.Context, since time.Time) (QueryStats, e
 			}
 		}
 		rows.Close()
+	}
+
+	// ── Live queries received (from DNS process counter) ─────────────────────
+	if v, err := db.GetServerStat(ctx, "dns_queries_received"); err == nil {
+		s.LiveQueriesReceived = v
 	}
 
 	return s, nil
