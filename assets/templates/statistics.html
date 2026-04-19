@@ -1,6 +1,6 @@
 {{template "base.html" .}}
 
-{{define "title"}}Statistics — DNS-RPZ{{end}}
+{{define "title"}}Statistics — rpzd{{end}}
 
 {{define "content"}}
 <div class="max-w-7xl mx-auto">
@@ -119,7 +119,7 @@
         </svg>
       </div>
       <p class="empty-state-title">No query data for this period</p>
-      <p class="empty-state-desc">DNS query statistics are collected when the dns-rpz server processes queries</p>
+      <p class="empty-state-desc">DNS query statistics are collected when the rpzd server processes queries</p>
     </div>
   </div>
   {{else}}

@@ -12,7 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bodsink/dns-rpz/internal/trust"
+	"github.com/bodsink/rpzd/internal/trust"
 )
 
 // TrustAPI holds trust-network dependencies injected into the HTTP server.

@@ -1,4 +1,4 @@
-module github.com/bodsink/dns-rpz
+module github.com/bodsink/rpzd
 
 go 1.25.0
 

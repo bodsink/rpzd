@@ -1,5 +1,5 @@
-# DNS-RPZ bootstrap config
-# Copy this file to dns-rpz.conf and fill in your values.
+# rpzd bootstrap config
+# Copy this file to rpzd.conf and fill in your values.
 # Lines starting with # are comments. Format: KEY=VALUE
 
 # -------------------------------------------------------
@@ -13,6 +13,12 @@ DATABASE_MIN_CONNS=2
 # Server listen addresses (required)
 # -------------------------------------------------------
 DNS_ADDRESS=0.0.0.0:53
+
+# Internal address of rpzd-dashboard (used by rpzd to forward DNS NOTIFY events).
+# rpzd sends POST /internal/notify to this address when a NOTIFY is received from a master.
+# Must match the HTTP_ADDRESS configured in rpzd-dashboard (default: 127.0.0.1:8080).
+# Change port if rpzd-dashboard listens on a different port.
+#DASHBOARD_ADDR=127.0.0.1:8080
 
 # -------------------------------------------------------
 # Logging (optional)

@@ -22,12 +22,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bodsink/dns-rpz/config"
-	dbschema "github.com/bodsink/dns-rpz/db"
-	"github.com/bodsink/dns-rpz/internal/api"
-	"github.com/bodsink/dns-rpz/internal/store"
-	"github.com/bodsink/dns-rpz/internal/syncer"
-	"github.com/bodsink/dns-rpz/internal/trust"
+	"github.com/bodsink/rpzd/config"
+	dbschema "github.com/bodsink/rpzd/db"
+	"github.com/bodsink/rpzd/internal/api"
+	"github.com/bodsink/rpzd/internal/store"
+	"github.com/bodsink/rpzd/internal/syncer"
+	"github.com/bodsink/rpzd/internal/trust"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,7 +47,7 @@ var zoneSyncMu sync.Map
 
 func main() {
 	// --- Config ---
-	cfgPath := "dns-rpz.conf"
+	cfgPath := "rpzd.conf"
 	if len(os.Args) > 1 {
 		cfgPath = os.Args[1]
 	}
@@ -169,13 +169,19 @@ func main() {
 		return syscall.Kill(os.Getpid(), syscall.SIGHUP)
 	})
 	apiServer.SetRestartWeb(func() error {
-		out, err := exec.Command("systemctl", "restart", "dns-rpz-http").CombinedOutput()
+		out, err := exec.Command("systemctl", "restart", "rpzd-dashboard").CombinedOutput()
 		if err != nil {
-			return fmt.Errorf("systemctl restart dns-rpz-http: %s: %w", strings.TrimSpace(string(out)), err)
+			return fmt.Errorf("systemctl restart rpzd-dashboard: %s: %w", strings.TrimSpace(string(out)), err)
 		}
 		return nil
 	})
 	apiServer.SetDNSAddress(cfg.Server.DNSAddress)
+	// Wire DNS NOTIFY trigger: when rpzd receives a NOTIFY from a master,
+	// it forwards the zone name here via POST /internal/notify, which calls
+	// scheduler.TriggerZone — performing an immediate AXFR/IXFR for that zone.
+	apiServer.SetNotifyScheduler(func(zoneName string) {
+		scheduler.TriggerZone(ctx, zoneName)
+	})
 
 	// Compute the advertised DNS address for trust-network zone propagation.
 	// Slaves use this address as master_ip when doing AXFR from this node.
@@ -542,7 +548,7 @@ func main() {
 		}
 	}()
 
-	logger.Info("dns-rpz-dashboard started", "addr", httpAddr, "tls", true)
+	logger.Info("rpzd-dashboard started", "addr", httpAddr, "tls", true)
 
 	// --- SIGHUP: reload sync interval and log settings from DB ---
 	reload := make(chan os.Signal, 1)

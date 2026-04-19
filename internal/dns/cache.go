@@ -41,11 +41,11 @@ func (c *ResponseCache) Len() int {
 	return c.lru.Len()
 }
 
-// Get retrieves a cached response for (qname, qtype).
+// Get retrieves a cached response for (qname, qtype, doBit).
 // Returns nil, false on a cache miss or if the entry has exceeded its TTL.
 // The returned message is a clone with TTL fields decremented by elapsed time.
-func (c *ResponseCache) Get(qname string, qtype uint16) (*dns.Msg, bool) {
-	key := cacheKey(qname, qtype)
+func (c *ResponseCache) Get(qname string, qtype uint16, doBit bool) (*dns.Msg, bool) {
+	key := cacheKey(qname, qtype, doBit)
 	entry, ok := c.lru.Get(key)
 	if !ok {
 		return nil, false
@@ -62,9 +62,9 @@ func (c *ResponseCache) Get(qname string, qtype uint16) (*dns.Msg, bool) {
 	return clone, true
 }
 
-// Set stores a DNS response in the cache keyed by (qname, qtype).
+// Set stores a DNS response in the cache keyed by (qname, qtype, doBit).
 // Only RcodeSuccess and RcodeNameError responses with non-zero TTL are cached.
-func (c *ResponseCache) Set(qname string, qtype uint16, msg *dns.Msg) {
+func (c *ResponseCache) Set(qname string, qtype uint16, doBit bool, msg *dns.Msg) {
 	if msg.Rcode != dns.RcodeSuccess && msg.Rcode != dns.RcodeNameError {
 		return
 	}
@@ -72,7 +72,7 @@ func (c *ResponseCache) Set(qname string, qtype uint16, msg *dns.Msg) {
 	if ttl == 0 {
 		return
 	}
-	key := cacheKey(qname, qtype)
+	key := cacheKey(qname, qtype, doBit)
 	c.lru.Add(key, &cacheEntry{
 		msg:      msg.Copy(),
 		cachedAt: time.Now(),
@@ -80,20 +80,34 @@ func (c *ResponseCache) Set(qname string, qtype uint16, msg *dns.Msg) {
 	})
 }
 
-// cacheKey returns a string key for the (qname, qtype) pair.
-func cacheKey(qname string, qtype uint16) string {
+// cacheKey returns a string key for the (qname, qtype, doBit) tuple.
+// Separating DO=1 and DO=0 queries prevents serving a RRSIG-less cached response
+// to a DNSSEC-aware client (RFC 4035 §3.2.1) and vice versa.
+func cacheKey(qname string, qtype uint16, doBit bool) string {
+	if doBit {
+		return fmt.Sprintf("%s|%d|do", qname, qtype)
+	}
 	return fmt.Sprintf("%s|%d", qname, qtype)
 }
 
-// extractMinTTL returns the minimum TTL found across the Answer and Ns RRs,
-// capped at cacheMaxTTL. For NXDOMAIN responses the SOA in Ns carries the
-// negative TTL per RFC 2308. Returns 0 if there are no RRs to inspect.
+// extractMinTTL returns the TTL to use when caching a DNS response.
+// For NXDOMAIN (RFC 2308 §5): the negative TTL is min(SOA header TTL, SOA MINIMUM field).
+// For positive responses: uses the minimum TTL across Answer + Ns RRs.
+// Caps at cacheMaxTTL. Returns 0 if there are no RRs to inspect.
 func extractMinTTL(msg *dns.Msg) uint32 {
 	min := cacheMaxTTL
 	found := false
 	for _, rr := range append(msg.Answer, msg.Ns...) {
 		found = true
-		if ttl := rr.Header().Ttl; ttl < min {
+		ttl := rr.Header().Ttl
+		// RFC 2308 §5: negative caching TTL = min(SOA.Ttl, SOA.Minimum).
+		// Some upstreams set the SOA TTL correctly, but we enforce it regardless.
+		if soa, ok := rr.(*dns.SOA); ok && msg.Rcode == dns.RcodeNameError {
+			if soa.Minttl < ttl {
+				ttl = soa.Minttl
+			}
+		}
+		if ttl < min {
 			min = ttl
 		}
 	}

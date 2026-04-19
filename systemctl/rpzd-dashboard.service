@@ -1,14 +1,14 @@
 [Unit]
-Description=DNS RPZ Dashboard
+Description=rpzd Dashboard
 After=network.target postgresql.service
 Wants=postgresql.service
-Before=dns-rpz-dns.service
+Before=rpzd.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/dns-rpz
-ExecStart=/opt/dns-rpz/dns-rpz-dashboard /opt/dns-rpz/dns-rpz.conf
+WorkingDirectory=/opt/rpzd
+ExecStart=/opt/rpzd/rpzd-dashboard /opt/rpzd/rpzd.conf
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536

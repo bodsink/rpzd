@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -12,15 +15,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bodsink/dns-rpz/config"
-	dbschema "github.com/bodsink/dns-rpz/db"
-	dnsserver "github.com/bodsink/dns-rpz/internal/dns"
-	"github.com/bodsink/dns-rpz/internal/store"
+	"github.com/bodsink/rpzd/config"
+	dbschema "github.com/bodsink/rpzd/db"
+	dnsserver "github.com/bodsink/rpzd/internal/dns"
+	"github.com/bodsink/rpzd/internal/store"
 )
 
 func main() {
 	// --- Config ---
-	cfgPath := "dns-rpz.conf"
+	cfgPath := "rpzd.conf"
 	if len(os.Args) > 1 {
 		cfgPath = os.Args[1]
 	}
@@ -71,7 +74,7 @@ func main() {
 	// Apply log level from DB (overrides bootstrap config)
 	levelVar.Set(parseLevelVar(settings.LogLevel))
 
-	// --- Write PID file so dns-rpz-dashboard can send SIGHUP after sync ---
+	// --- Write PID file so rpzd-dashboard can send SIGHUP after sync ---
 	if err := writePIDFile(cfg.Server.PIDFile); err != nil {
 		logger.Warn("failed to write pid file", "path", cfg.Server.PIDFile, "err", err)
 	} else {
@@ -150,6 +153,20 @@ func main() {
 	handler.SetAXFRProvider(&dbAXFRProvider{db: db})
 	logger.Info("axfr serving enabled: trust-network slaves can pull zones from this node")
 
+	// Wire DNS NOTIFY trigger (RFC 1996): forward zone name to rpzd-dashboard via
+	// POST /internal/notify so it can trigger an immediate AXFR/IXFR sync.
+	// Only fires if notifyTrigger is non-nil (set below after handler.SetNotifyTrigger).
+	handler.SetNotifyTrigger(func(zoneName string) {
+		forwardNotifyToDashboard(cfg.Server.DashboardAddr, zoneName, logger)
+	})
+
+	// Wire Response Rate Limiting (RRL) — protects against DNS amplification abuse.
+	// rrl_rate and rrl_burst are set via the settings table; 0 = disabled (default).
+	if settings.RRLRate > 0 {
+		handler.SetRRL(settings.RRLRate, settings.RRLBurst)
+		logger.Info("response rate limiting enabled", "rate_per_sec", settings.RRLRate, "burst", settings.RRLBurst)
+	}
+
 	// --- Query statistics logger ---
 	queryLogger := store.NewBufferedQueryLogger(db, 100_000, logger)
 	handler.SetQueryLogger(queryLogger)
@@ -184,7 +201,7 @@ func main() {
 		}
 	}()
 
-	logger.Info("dns-rpz started", "dns", cfg.Server.DNSAddress)
+	logger.Info("rpzd started", "dns", cfg.Server.DNSAddress)
 
 	// --- SIGHUP: reload config file + ACL + RPZ index (used by systemctl reload) ---
 	go func() {
@@ -227,7 +244,9 @@ func main() {
 				if newSettings.RPZDefaultAction != handler.DefaultAction() {
 					handler.SetDefaultAction(newSettings.RPZDefaultAction)
 					logger.Info("rpz default action updated", "action", newSettings.RPZDefaultAction)
-				} // Log level from DB — overrides config file level
+				} // RRL — apply atomically (SetRRL swaps the limiter instance)
+				handler.SetRRL(newSettings.RRLRate, newSettings.RRLBurst)
+				// Log level from DB — overrides config file level
 				newLevel := parseLevelVar(newSettings.LogLevel)
 				if levelVar.Level() != newLevel {
 					levelVar.Set(newLevel)
@@ -282,6 +301,31 @@ func main() {
 	dnsServer.Shutdown()
 	cancel()
 	logger.Info("shutdown complete")
+}
+
+// notifyHTTPClient is a package-level HTTP client reused across all NOTIFY forward calls.
+// InsecureSkipVerify is intentional: dashboard uses a self-signed cert on localhost.
+var notifyHTTPClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed cert on localhost
+	},
+}
+
+// forwardNotifyToDashboard sends a DNS NOTIFY event to rpzd-dashboard via
+// POST /internal/notify?zone=<zoneName>. This triggers an immediate IXFR/AXFR
+// sync for the notified zone without waiting for the next scheduled interval.
+func forwardNotifyToDashboard(dashboardAddr, zoneName string, logger *slog.Logger) {
+	endpoint := "https://" + dashboardAddr + "/internal/notify?zone=" + url.QueryEscape(zoneName)
+	resp, err := notifyHTTPClient.Post(endpoint, "application/json", nil)
+	if err != nil {
+		logger.Warn("NOTIFY forward failed", "zone", zoneName, "err", err)
+		return
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logger.Warn("NOTIFY forward unexpected status", "zone", zoneName, "status", resp.StatusCode)
+	}
 }
 
 // writePIDFile writes the current process PID to the given file path.
@@ -370,4 +414,3 @@ func (p *dbAXFRProvider) ListZoneRecordsForAXFR(ctx context.Context, zoneName st
 	}
 	return serial, result, nil
 }
-

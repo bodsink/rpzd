@@ -8,7 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/bodsink/dns-rpz/internal/store"
+	"github.com/bodsink/rpzd/internal/store"
 )
 
 // handleUserList renders the user management page.

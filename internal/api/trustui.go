@@ -9,7 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bodsink/dns-rpz/internal/trust"
+	"github.com/bodsink/rpzd/internal/trust"
 )
 
 // trustNodeRow represents a row in the trust nodes UI table.

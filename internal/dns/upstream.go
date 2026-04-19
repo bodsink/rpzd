@@ -155,11 +155,20 @@ func (u *Upstream) exchangeRace(r *dns.Msg) (ExchangeResult, error) {
 // ExchangeTracked sends the query using the configured strategy and returns
 // the response along with the upstream server address and measured RTT.
 // If a cache is configured, the cache is consulted first (RTT = 0, Server = "cache").
+// The DO bit (DNSSEC OK) is included in the cache key so that DNSSEC-aware clients
+// (DO=1) do not receive a cached response that lacks RRSIG records.
 func (u *Upstream) ExchangeTracked(r *dns.Msg) (ExchangeResult, error) {
+	var doBit bool
+	if len(r.Question) > 0 {
+		if opt := r.IsEdns0(); opt != nil {
+			doBit = opt.Do()
+		}
+	}
+
 	if u.cache != nil && len(r.Question) > 0 {
 		qname := r.Question[0].Name
 		qtype := r.Question[0].Qtype
-		if cached, ok := u.cache.Get(qname, qtype); ok {
+		if cached, ok := u.cache.Get(qname, qtype, doBit); ok {
 			return ExchangeResult{Resp: cached, Server: "cache", RTT: 0}, nil
 		}
 	}
@@ -178,7 +187,7 @@ func (u *Upstream) ExchangeTracked(r *dns.Msg) (ExchangeResult, error) {
 	}
 
 	if u.cache != nil && err == nil && len(r.Question) > 0 {
-		u.cache.Set(r.Question[0].Name, r.Question[0].Qtype, res.Resp)
+		u.cache.Set(r.Question[0].Name, r.Question[0].Qtype, doBit, res.Resp)
 	}
 	return res, err
 }

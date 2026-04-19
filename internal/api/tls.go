@@ -49,8 +49,8 @@ func EnsureSelfSignedCert(certFile, keyFile string) error {
 	tmpl := &x509.Certificate{
 		SerialNumber: serial,
 		Subject: pkix.Name{
-			Organization: []string{"DNS-RPZ"},
-			CommonName:   "dns-rpz-dashboard",
+			Organization: []string{"rpzd"},
+			CommonName:   "rpzd-dashboard",
 		},
 		NotBefore:             time.Now().Add(-time.Minute), // 1-minute grace for clock skew
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),

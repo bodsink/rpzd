@@ -39,11 +39,13 @@ type Handler struct {
 	defaultAction   atomic.Value   // stores string: "nxdomain" or "nodata"
 	upstream        unsafe.Pointer // *Upstream, swapped atomically
 	authIdx         unsafe.Pointer // *AuthoritativeIndex, nil = disabled
+	rrlPtr          unsafe.Pointer // *dnsRRL, swapped atomically; nil = RRL disabled
 	logger          *slog.Logger
-	auditLog        atomic.Bool  // when true, log every query at INFO level for audit purposes
-	queryLog        atomic.Value // stores QueryLogger; nil when disabled
-	queriesReceived atomic.Int64 // total queries received since startup (resets on restart)
-	axfrProvider    AXFRProvider // optional; nil = AXFR not supported
+	auditLog        atomic.Bool           // when true, log every query at INFO level for audit purposes
+	queryLog        atomic.Value          // stores QueryLogger; nil when disabled
+	queriesReceived atomic.Int64          // total queries received since startup (resets on restart)
+	axfrProvider    AXFRProvider          // optional; nil = AXFR not supported
+	notifyTrigger   func(zoneName string) // optional; called when a valid NOTIFY is received
 }
 
 // Indexer is the interface for looking up RPZ entries.
@@ -95,6 +97,23 @@ func (h *Handler) getAuthIndex() *AuthoritativeIndex {
 // SetAuditLog toggles audit logging at runtime without restarting the service.
 func (h *Handler) SetAuditLog(v bool) {
 	h.auditLog.Store(v)
+}
+
+// getRRL returns the current RRL limiter, or nil if RRL is disabled.
+func (h *Handler) getRRL() *dnsRRL {
+	return (*dnsRRL)(atomic.LoadPointer(&h.rrlPtr))
+}
+
+// SetRRL replaces the response rate limiter at runtime (safe to call during SIGHUP).
+// ratePerSec is the maximum number of queries per second per client IP.
+// burst is the token-bucket burst size; if <= 0 it defaults to ratePerSec.
+// Set ratePerSec=0 to disable RRL.
+func (h *Handler) SetRRL(ratePerSec, burst int) {
+	newRRL := newDNSRRL(ratePerSec, burst)
+	old := (*dnsRRL)(atomic.SwapPointer(&h.rrlPtr, unsafe.Pointer(newRRL)))
+	if old != nil {
+		old.stop()
+	}
 }
 
 // AuditLog returns the current audit log setting.
@@ -162,6 +181,30 @@ func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
+	// RFC 1035 §4.1.2: only one question per query is defined.
+	// Clients sending multiple questions are non-compliant; return FORMERR.
+	if len(r.Question) > 1 {
+		m.SetRcode(r, dns.RcodeFormatError)
+		w.WriteMsg(m) //nolint:errcheck
+		return
+	}
+
+	// EDNS0 (RFC 6891): read OPT record from client request and negotiate UDP buffer size.
+	// If the client advertises a buffer size, honour it (capped at 4096).
+	// Always echo back an OPT record in the response so the client knows we support EDNS0.
+	// For non-EDNS clients, do not add OPT (would break older resolvers).
+	const maxUDPSize = 4096
+	if opt := r.IsEdns0(); opt != nil {
+		clientBuf := opt.UDPSize()
+		if clientBuf < dns.MinMsgSize {
+			clientBuf = dns.MinMsgSize
+		}
+		if clientBuf > maxUDPSize {
+			clientBuf = maxUDPSize
+		}
+		m.SetEdns0(clientBuf, false)
+	}
+
 	// Count every valid query regardless of ACL/RPZ outcome or log buffer state.
 	h.queriesReceived.Add(1)
 
@@ -172,6 +215,14 @@ func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 		w.WriteMsg(m) //nolint:errcheck
 		return
 	}
+
+	// RRL (Response Rate Limiting): silently drop queries that exceed per-IP rate.
+	// Prevents DNS amplification abuse. Only active if SetRRL was called with ratePerSec > 0.
+	if rrl := h.getRRL(); rrl != nil && !rrl.Allow(clientIP) {
+		h.logger.Warn("rrl: query rate exceeded, dropping", "client", clientIP)
+		return
+	}
+
 	ip := net.ParseIP(clientIP)
 
 	q := r.Question[0]
@@ -186,6 +237,24 @@ func (h *Handler) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 	// AXFR/IXFR — handled separately (zone transfer, not a regular query).
 	if q.Qtype == dns.TypeAXFR || q.Qtype == dns.TypeIXFR {
 		h.handleAXFR(w, r, qname)
+		return
+	}
+
+	// NOTIFY (RFC 1996): master signals that a zone has changed.
+	// Respond with NOERROR immediately, then trigger an async sync.
+	// RA must be 0 in NOTIFY responses (RFC 1996 §3.7).
+	// We do not validate the source IP here — the syncer will verify via TSIG/serial.
+	if r.Opcode == dns.OpcodeNotify {
+		m.RecursionAvailable = false
+		m.SetRcode(r, dns.RcodeSuccess)
+		m.Opcode = dns.OpcodeNotify
+		m.Authoritative = true
+		w.WriteMsg(m) //nolint:errcheck
+		zoneName := strings.TrimSuffix(qname, ".")
+		h.logger.Info("notify received", "zone", zoneName, "from", clientIP)
+		if h.notifyTrigger != nil {
+			go h.notifyTrigger(zoneName)
+		}
 		return
 	}
 
@@ -270,8 +339,19 @@ func (h *Handler) serveAuthoritative(w dns.ResponseWriter, r, m *dns.Msg, qname 
 
 // forward sends the query to the upstream pool and relays the response.
 // It calls logQuery with the upstream server address and RTT.
+// The query forwarded to upstream has its EDNS0 buffer size capped at maxUDPSize
+// so upstream never sends a UDP payload larger than our receive buffer.
 func (h *Handler) forward(w dns.ResponseWriter, r, m *dns.Msg, clientIP, qname, qtype string) {
-	res, err := h.getUpstream().ExchangeTracked(r)
+	// Cap the EDNS0 payload size in the query we send to upstream.
+	// This prevents the upstream from sending a UDP response larger than we can receive,
+	// avoiding unnecessary TC+TCP fallback cycles for oversized responses.
+	const maxUDPSize = 4096
+	upstreamReq := r
+	if opt := r.IsEdns0(); opt != nil && opt.UDPSize() > maxUDPSize {
+		upstreamReq = r.Copy()
+		upstreamReq.IsEdns0().SetUDPSize(maxUDPSize)
+	}
+	res, err := h.getUpstream().ExchangeTracked(upstreamReq)
 	if err != nil {
 		h.logger.Warn("upstream error", "err", err)
 		m.SetRcode(r, dns.RcodeServerFailure)
@@ -344,6 +424,13 @@ func rpzSOA(name string) dns.RR {
 		Expire:  604800,
 		Minttl:  30,
 	}
+}
+
+// SetNotifyTrigger registers a callback invoked when a valid DNS NOTIFY is received.
+// The callback receives the zone name (without trailing dot) and should trigger
+// an immediate zone sync on that zone. Safe to call before starting the server.
+func (h *Handler) SetNotifyTrigger(fn func(zoneName string)) {
+	h.notifyTrigger = fn
 }
 
 // handleAXFR serves an outbound AXFR (zone transfer) for a zone stored in this node.
@@ -468,7 +555,6 @@ func buildAXFRRecord(rec AXFRRecord, zoneFQDN string) (dns.RR, error) {
 		return nil, fmt.Errorf("unsupported rtype %q", rec.RType)
 	}
 }
-
 
 type Server struct {
 	udpServer *dns.Server

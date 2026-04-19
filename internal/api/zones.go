@@ -8,7 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bodsink/dns-rpz/internal/store"
+	"github.com/bodsink/rpzd/internal/store"
 )
 
 // recordFormFields holds the decomposed per-type form field values for re-rendering on error.

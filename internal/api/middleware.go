@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/bodsink/dns-rpz/internal/store"
+	"github.com/bodsink/rpzd/internal/store"
 	"golang.org/x/time/rate"
 )
 
@@ -198,7 +198,7 @@ func generateSessionID() (string, error) {
 var csrfSecret = func() []byte {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		panic("dns-rpz: failed to generate CSRF secret: " + err.Error())
+				panic("rpzd: failed to generate CSRF secret: " + err.Error())
 	}
 	return b
 }()
@@ -234,6 +234,23 @@ func clearSessionCookie(c *gin.Context) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// middlewareLocalhostOnly rejects requests that do not originate from 127.0.0.1 or ::1.
+// Used to restrict internal endpoints (e.g. /internal/notify) to the local machine only.
+func (s *Server) middlewareLocalhostOnly() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+		if err != nil {
+			host = c.Request.RemoteAddr
+		}
+		if host != "127.0.0.1" && host != "::1" {
+			c.Status(http.StatusForbidden)
+			c.Abort()
+			return
+		}
+		c.Next()
+	}
 }
 
 // currentUser retrieves the authenticated user from gin context.

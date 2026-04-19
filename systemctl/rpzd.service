@@ -1,18 +1,18 @@
 [Unit]
-Description=DNS RPZ Server
+Description=rpzd DNS Server
 After=network.target postgresql.service
 Wants=postgresql.service
 
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/opt/dns-rpz
-ExecStart=/opt/dns-rpz/dns-rpz-dns /opt/dns-rpz/dns-rpz.conf
+WorkingDirectory=/opt/rpzd
+ExecStart=/opt/rpzd/rpzd /opt/rpzd/rpzd.conf
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
-RuntimeDirectory=dns-rpz
+RuntimeDirectory=rpzd
 RuntimeDirectoryMode=0755
 
 [Install]

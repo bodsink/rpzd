@@ -13,9 +13,9 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 
-	"github.com/bodsink/dns-rpz/internal/store"
-	"github.com/bodsink/dns-rpz/internal/syncer"
-	"github.com/bodsink/dns-rpz/internal/trust"
+	"github.com/bodsink/rpzd/internal/store"
+	"github.com/bodsink/rpzd/internal/syncer"
+	"github.com/bodsink/rpzd/internal/trust"
 )
 
 // fmtNumPositive formats a non-negative int64 with dot thousands separators.
@@ -56,14 +56,15 @@ type Server struct {
 	trust             *TrustAPI       // trust network, nil if not configured
 	trustJoinState    TrustJoinStatus // join state when trust==nil
 	trustBootstrap    string          // bootstrap IP for display
-	dnsSignal         func() error    // send SIGHUP to dns-rpz-dns — reloads upstream pool from DB
+	dnsSignal         func() error    // send SIGHUP to rpzd — reloads upstream pool from DB
 	selfReload        func() error    // send SIGHUP to self — reloads sync interval into scheduler
-	restartWeb        func() error    // restart dns-rpz-http service — applies new web port
+	restartWeb        func() error    // restart rpzd-dashboard service — applies new web port
 	onZoneChanged     func()          // notify peers after zone create/update/delete
 	onTrustZonesSync  func()          // triggered when a peer requests immediate zone sync
 	dnsAddr           string          // DNS listen address for health-check (e.g. "0.0.0.0:53")
 	advertisedDNSAddr string          // DNS address advertised to trust-network slaves for AXFR (e.g. "1.2.3.4:53")
 	sysCache          sysStatsCache
+	notifyScheduler   func(zoneName string) // called when DNS NOTIFY is forwarded from rpzd
 }
 
 // NewServer creates and configures the HTTP server with all routes and middleware.
@@ -185,6 +186,11 @@ func NewServer(db *store.DB, zoneSyncer *syncer.ZoneSyncer, logger *slog.Logger,
 	})
 	r.Static("/static", staticDir)
 
+	// --- Internal notify endpoint (localhost only, no auth) ---
+	// Called by rpzd when it receives a DNS NOTIFY from a master. This triggers
+	// an immediate zone sync without waiting for the next scheduled interval.
+	r.POST("/internal/notify", s.middlewareLocalhostOnly(), s.handleInternalNotify)
+
 	// --- Public routes ---
 	r.GET("/login", s.handleLoginPage)
 	r.POST("/login", s.middlewareRateLimit(), s.handleLoginSubmit)
@@ -261,6 +267,12 @@ func NewServer(db *store.DB, zoneSyncer *syncer.ZoneSyncer, logger *slog.Logger,
 	return s
 }
 
+// SetNotifyScheduler registers a callback invoked when a DNS NOTIFY is received.
+// The callback receives the zone name (without trailing dot) and triggers an
+// immediate zone sync on that zone. Only called from the /internal/notify endpoint
+// which is localhost-only.
+func (s *Server) SetNotifyScheduler(fn func(zoneName string)) { s.notifyScheduler = fn }
+
 // SetDNSSignal sets a callback invoked after DNS upstream settings are saved.
 // Typically used to send SIGHUP to the DNS process so it reloads from DB.
 func (s *Server) SetDNSSignal(fn func() error) { s.dnsSignal = fn }
@@ -270,7 +282,7 @@ func (s *Server) SetDNSSignal(fn func() error) { s.dnsSignal = fn }
 func (s *Server) SetSelfReload(fn func() error) { s.selfReload = fn }
 
 // SetRestartWeb sets a callback invoked after web port is saved.
-// Typically runs "systemctl restart dns-rpz-http" to apply the new port.
+// Typically runs "systemctl restart rpzd-dashboard" to apply the new port.
 func (s *Server) SetRestartWeb(fn func() error) { s.restartWeb = fn }
 
 // SetOnZoneChanged registers a callback invoked after a zone is created, updated, or deleted.

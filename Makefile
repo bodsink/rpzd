@@ -1,7 +1,7 @@
-BINARY_DNS  = dns-rpz-dns
-BINARY_HTTP = dns-rpz-dashboard
+BINARY_DNS  = rpzd
+BINARY_HTTP = rpzd-dashboard
 BUILD_DIR   = bin
-REMOTE_DIR  = /opt/dns-rpz
+REMOTE_DIR  = /opt/rpzd
 SYSTEMD     = /etc/systemd/system
 
 # Set SERVER + SSH_PORT di .deploy.env atau via CLI.
@@ -17,8 +17,8 @@ SCP = scp -P $(SSH_PORT)
 .PHONY: build deploy install restart restart-dns restart-http
 
 build:
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_DNS) ./cmd/dns-rpz/
-	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_HTTP) ./cmd/dns-rpz-dashboard/
+	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_DNS) ./cmd/rpzd/
+	GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_HTTP) ./cmd/rpzd-dashboard/
 
 # install — first-time full setup: build, upload, setup DB, generate config + TLS, start service.
 # Opsi: DNS_ADDR (default 0.0.0.0:53), HTTP_ADDR (default 0.0.0.0:8080)
@@ -52,8 +52,8 @@ install:
 	$(SCP) $(BUILD_DIR)/$(BINARY_HTTP) $(SERVER):$(REMOTE_DIR)/$(BINARY_HTTP).new
 	$(SSH) $(SERVER) "mv $(REMOTE_DIR)/$(BINARY_HTTP).new $(REMOTE_DIR)/$(BINARY_HTTP)"
 	$(SCP) -r assets $(SERVER):$(REMOTE_DIR)/
-	$(SCP) systemctl/dns-rpz-dns.service  $(SERVER):$(SYSTEMD)/dns-rpz-dns.service
-	$(SCP) systemctl/dns-rpz-http.service $(SERVER):$(SYSTEMD)/dns-rpz-http.service
+	$(SCP) systemctl/rpzd.service          $(SERVER):$(SYSTEMD)/rpzd.service
+	$(SCP) systemctl/rpzd-dashboard.service $(SERVER):$(SYSTEMD)/rpzd-dashboard.service
 	$(SCP) scripts/setup.sh $(SERVER):$(REMOTE_DIR)/setup.sh
 	@echo "==> [4/4] Setup DB, TLS, config, dan start service..."
 	$(SSH) $(SERVER) "bash $(REMOTE_DIR)/setup.sh '$(DNS_ADDR)' '$(HTTP_ADDR)'"
@@ -70,12 +70,12 @@ deploy: build
 
 # restart — deploy lalu restart kedua service.
 restart: deploy
-	$(SSH) $(SERVER) "systemctl restart dns-rpz-dns dns-rpz-http && sleep 5 && journalctl -u dns-rpz-dns -u dns-rpz-http --no-pager -n 20"
+	$(SSH) $(SERVER) "systemctl restart rpzd rpzd-dashboard && sleep 5 && journalctl -u rpzd -u rpzd-dashboard --no-pager -n 20"
 
 # restart-dns — restart DNS service saja (tanpa downtime dashboard).
 restart-dns: deploy
-	$(SSH) $(SERVER) "systemctl restart dns-rpz-dns && sleep 3 && journalctl -u dns-rpz-dns --no-pager -n 10"
+	$(SSH) $(SERVER) "systemctl restart rpzd && sleep 3 && journalctl -u rpzd --no-pager -n 10"
 
 # restart-http — restart dashboard saja (tanpa mengganggu DNS).
 restart-http: deploy
-	$(SSH) $(SERVER) "systemctl restart dns-rpz-http && sleep 2 && journalctl -u dns-rpz-http --no-pager -n 10"
+	$(SSH) $(SERVER) "systemctl restart rpzd-dashboard && sleep 2 && journalctl -u rpzd-dashboard --no-pager -n 10"

@@ -25,10 +25,11 @@ type BootstrapConfig struct {
 type ServerConfig struct {
 	DNSAddress        string // DNS_ADDRESS, e.g. "0.0.0.0:53"
 	HTTPAddress       string // HTTP_ADDRESS, e.g. "0.0.0.0:8080"
-	PIDFile           string // PID_FILE: path where dns-rpz-dns writes its PID (default: /run/dns-rpz/dns-rpz.pid)
+	PIDFile           string // PID_FILE: path where rpzd writes its PID (default: /run/rpzd/rpzd.pid)
 	TLSCertFile       string // TLS_CERT_FILE: path to TLS certificate PEM file (default: ./certs/server.crt)
 	TLSKeyFile        string // TLS_KEY_FILE: path to TLS private key PEM file (default: ./certs/server.key)
 	AdminInitPassword string // ADMIN_INIT_PASSWORD: used only on first run to set admin password; ignored if users already exist
+	DashboardAddr     string // DASHBOARD_ADDR: internal address of rpzd-dashboard for NOTIFY forwarding (default: 127.0.0.1:8080)
 }
 
 // DatabaseConfig holds PostgreSQL connection settings.
@@ -98,6 +99,7 @@ func Load(path string) (*BootstrapConfig, error) {
 	cfg.Server.TLSCertFile = env["TLS_CERT_FILE"]
 	cfg.Server.TLSKeyFile = env["TLS_KEY_FILE"]
 	cfg.Server.AdminInitPassword = env["ADMIN_INIT_PASSWORD"]
+	cfg.Server.DashboardAddr = env["DASHBOARD_ADDR"]
 	cfg.Database.DSN = env["DATABASE_DSN"]
 	cfg.Log.Level = env["LOG_LEVEL"]
 	cfg.Node.KeyPath = env["NODE_KEY_PATH"]
@@ -153,7 +155,7 @@ func (c *BootstrapConfig) setDefaults() {
 		c.Server.HTTPAddress = "0.0.0.0:8080"
 	}
 	if c.Server.PIDFile == "" {
-		c.Server.PIDFile = "/run/dns-rpz/dns-rpz.pid"
+		c.Server.PIDFile = "/run/rpzd/rpzd.pid"
 	}
 	if c.Log.Level == "" {
 		c.Log.Level = "info"
@@ -163,6 +165,9 @@ func (c *BootstrapConfig) setDefaults() {
 	}
 	if c.Server.TLSKeyFile == "" {
 		c.Server.TLSKeyFile = "./certs/server.key"
+	}
+	if c.Server.DashboardAddr == "" {
+		c.Server.DashboardAddr = "127.0.0.1:8080"
 	}
 	if c.Node.KeyPath == "" {
 		c.Node.KeyPath = "./node.key"

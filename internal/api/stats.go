@@ -15,7 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/bodsink/dns-rpz/internal/store"
+	"github.com/bodsink/rpzd/internal/store"
 )
 
 // ─── Dashboard zone stats ─────────────────────────────────────────────────────

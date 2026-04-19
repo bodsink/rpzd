@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/bodsink/dns-rpz/config"
+	"github.com/bodsink/rpzd/config"
 )
 
 func newLogger(cfg config.LogConfig) (*slog.Logger, *slog.LevelVar) {

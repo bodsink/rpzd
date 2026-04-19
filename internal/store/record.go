@@ -280,6 +280,76 @@ func (s *BulkUpsertSession) Close() {
 	s.conn.Release()
 }
 
+// ApplyIXFRDelta atomically applies an IXFR incremental delta to rpz_records:
+// deletes the specified records (matched by zone_id + name + rtype + rdata) and
+// inserts new records, all within a single transaction.
+//
+// Both slices may be empty — in that case the function is a no-op.
+func (db *DB) ApplyIXFRDelta(ctx context.Context, zoneID int64, toDelete []Record, toAdd []Record) (added, removed int, err error) {
+	if len(toDelete) == 0 && len(toAdd) == 0 {
+		return 0, 0, nil
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("begin ixfr delta tx: %w", err)
+	}
+	defer tx.Rollback(context.Background()) //nolint:errcheck
+
+	if len(toDelete) > 0 {
+		names := make([]string, len(toDelete))
+		rtypes := make([]string, len(toDelete))
+		rdatas := make([]string, len(toDelete))
+		for i, r := range toDelete {
+			names[i] = r.Name
+			rtypes[i] = r.RType
+			rdatas[i] = r.RData
+		}
+		tag, err := tx.Exec(ctx, `
+			DELETE FROM rpz_records
+			WHERE zone_id = $1
+			  AND (name, rtype, rdata) IN (
+			      SELECT * FROM unnest($2::text[], $3::text[], $4::text[])
+			  )`,
+			zoneID, names, rtypes, rdatas,
+		)
+		if err != nil {
+			return 0, 0, fmt.Errorf("ixfr delete: %w", err)
+		}
+		removed = int(tag.RowsAffected())
+	}
+
+	if len(toAdd) > 0 {
+		batch := &pgx.Batch{}
+		for _, r := range toAdd {
+			batch.Queue(`
+				INSERT INTO rpz_records (zone_id, name, rtype, rdata, ttl, updated_at, synced_at)
+				VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+				ON CONFLICT (zone_id, name, rtype, rdata) DO UPDATE
+				  SET ttl = EXCLUDED.ttl, updated_at = NOW(), synced_at = NOW()`,
+				zoneID, r.Name, r.RType, r.RData, r.TTL,
+			)
+		}
+		br := tx.SendBatch(ctx, batch)
+		for i := 0; i < len(toAdd); i++ {
+			tag, batchErr := br.Exec()
+			if batchErr != nil {
+				br.Close()
+				return 0, 0, fmt.Errorf("ixfr insert row %d: %w", i, batchErr)
+			}
+			added += int(tag.RowsAffected())
+		}
+		if err := br.Close(); err != nil {
+			return 0, 0, fmt.Errorf("ixfr insert batch close: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, 0, fmt.Errorf("commit ixfr delta: %w", err)
+	}
+	return added, removed, nil
+}
+
 // CountRecords returns the total number of records across all zones.
 func (db *DB) CountRecords(ctx context.Context) (int64, error) {
 	var n int64

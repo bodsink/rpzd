@@ -81,10 +81,12 @@ func (db *DB) LoadAppSettings(ctx context.Context) (*AppSettingsRow, error) {
 		DNSCacheSize:     intOrDefault(m["dns_cache_size"], 100000),
 		RPZDefaultAction: stringOrDefault(m["rpz_default_action"], "nxdomain"),
 		AuditLog:         boolOrDefault(m["dns_audit_log"], false),
+		RRLRate:          intOrDefault(m["rrl_rate"], 0),
+		RRLBurst:         intOrDefault(m["rrl_burst"], 0),
 		LogLevel:         stringOrDefault(m["log_level"], "info"),
 		LogFormat:        stringOrDefault(m["log_format"], "text"),
 		LogFile:          boolOrDefault(m["log_file"], false),
-		LogFilePath:      stringOrDefault(m["log_file_path"], "/var/log/dns-rpz/dns-rpz.log"),
+		LogFilePath:      stringOrDefault(m["log_file_path"], "/var/log/rpzd/rpzd.log"),
 		LogRotate:        boolOrDefault(m["log_rotate"], false),
 		LogRotateSize:    stringOrDefault(m["log_rotate_size"], "100M"),
 		LogRotateKeep:    intOrDefault(m["log_rotate_keep"], 7),
@@ -102,19 +104,21 @@ type AppSettingsRow struct {
 	SyncInterval     int
 	WebPort          int    // web dashboard listen port (default: 8080)
 	Timezone         string // system timezone, e.g. "Asia/Jakarta" (default: "UTC")
-	DNSUpstreams      string // comma-separated upstream resolvers (default: "8.8.8.8:53,8.8.4.4:53")
-	DNSUpstreamStrat  string // roundrobin | random | race (default: roundrobin)
-	DNSCacheSize      int    // dns_cache_size: upstream response cache entries, 0=disabled (default: 100000)
-	RPZDefaultAction  string // rpz_default_action: nxdomain|nodata (default: nxdomain)
-	AuditLog          bool   // dns_audit_log: log every query at INFO level (default: false)
+	DNSUpstreams     string // comma-separated upstream resolvers (default: "8.8.8.8:53,8.8.4.4:53")
+	DNSUpstreamStrat string // roundrobin | random | race (default: roundrobin)
+	DNSCacheSize     int    // dns_cache_size: upstream response cache entries, 0=disabled (default: 100000)
+	RPZDefaultAction string // rpz_default_action: nxdomain|nodata (default: nxdomain)
+	AuditLog         bool   // dns_audit_log: log every query at INFO level (default: false)
+	RRLRate          int    // rrl_rate: max queries/sec per client IP, 0=disabled (default: 0)
+	RRLBurst         int    // rrl_burst: token bucket burst size, 0=same as rrl_rate (default: 0)
 	// Logging
-	LogLevel       string // log_level: debug|info|warn|error (default: info)
-	LogFormat      string // log_format: text|json (default: text)
-	LogFile        bool   // log_file: write logs to file (default: false)
-	LogFilePath    string // log_file_path: path to log file (default: /var/log/dns-rpz/dns-rpz.log)
-	LogRotate      bool   // log_rotate: enable logrotate config generation (default: false)
-	LogRotateSize  string // log_rotate_size: rotate when file reaches this size, e.g. 100M (default: 100M)
-	LogRotateKeep  int    // log_rotate_keep: number of rotated files to keep (default: 7)
+	LogLevel      string // log_level: debug|info|warn|error (default: info)
+	LogFormat     string // log_format: text|json (default: text)
+	LogFile       bool   // log_file: write logs to file (default: false)
+	LogFilePath   string // log_file_path: path to log file (default: /var/log/rpzd/rpzd.log)
+	LogRotate     bool   // log_rotate: enable logrotate config generation (default: false)
+	LogRotateSize string // log_rotate_size: rotate when file reaches this size, e.g. 100M (default: 100M)
+	LogRotateKeep int    // log_rotate_keep: number of rotated files to keep (default: 7)
 }
 
 func stringOrDefault(v, def string) string {

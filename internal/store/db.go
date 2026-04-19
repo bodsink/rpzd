@@ -7,7 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/bodsink/dns-rpz/config"
+	"github.com/bodsink/rpzd/config"
 )
 
 // DB wraps a pgxpool connection pool.
@@ -52,7 +52,7 @@ func (db *DB) Close() {
 // Uses a PostgreSQL advisory lock to prevent concurrent migration races
 // when multiple binaries (dns + dashboard) start at the same time.
 func (db *DB) Migrate(ctx context.Context, schemaSQL string) error {
-	const lockID = 7391824 // arbitrary fixed lock ID for dns-rpz migrations
+	const lockID = 7391824 // arbitrary fixed lock ID for rpzd migrations
 
 	conn, err := db.Pool.Acquire(ctx)
 	if err != nil {

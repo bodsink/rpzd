@@ -161,12 +161,26 @@ func (s *Server) handleSettingsSaveDNS(c *gin.Context) {
 		auditLog = "true"
 	}
 
+	rrlRateStr := strings.TrimSpace(c.PostForm("rrl_rate"))
+	if n, err := strconv.Atoi(rrlRateStr); err != nil || n < 0 {
+		renderErr("RRL rate must be a non-negative integer.")
+		return
+	}
+
+	rrlBurstStr := strings.TrimSpace(c.PostForm("rrl_burst"))
+	if n, err := strconv.Atoi(rrlBurstStr); err != nil || n < 0 {
+		renderErr("RRL burst must be a non-negative integer.")
+		return
+	}
+
 	kvs := map[string]string{
 		"dns_upstream":          upstreams,
 		"dns_upstream_strategy": strategy,
 		"rpz_default_action":    rpzDefaultAction,
 		"dns_cache_size":        dnsCacheSizeStr,
 		"dns_audit_log":         auditLog,
+		"rrl_rate":              rrlRateStr,
+		"rrl_burst":             rrlBurstStr,
 	}
 	if err := saveSettingsMap(ctx, s, kvs); err != nil {
 		s.renderError(c, http.StatusInternalServerError, "Failed to save settings", err)
@@ -215,7 +229,6 @@ func (s *Server) handleSettingsSaveWeb(c *gin.Context) {
 	}
 
 	s.logger.Info("web server settings updated", "user", currentUser(c).Username, "port", webPort)
-
 
 	// Restart the web service in background so the redirect response is sent first.
 	if s.restartWeb != nil {
@@ -297,13 +310,13 @@ func (s *Server) handleSettingsSaveLogging(c *gin.Context) {
 	renderErr := func(msg string) {
 		settings, _ := s.db.LoadAppSettings(ctx)
 		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
-			"User":           currentUser(c),
-			"CSRFToken":      csrfToken(c),
-			"ActivePage":     "settings",
-			"ActiveSubPage":  "general",
-			"Tab":            "general",
-			"Settings":       settings,
-			"ErrorLogging":   msg,
+			"User":          currentUser(c),
+			"CSRFToken":     csrfToken(c),
+			"ActivePage":    "settings",
+			"ActiveSubPage": "general",
+			"Tab":           "general",
+			"Settings":      settings,
+			"ErrorLogging":  msg,
 		})
 	}
 
@@ -328,7 +341,7 @@ func (s *Server) handleSettingsSaveLogging(c *gin.Context) {
 
 	logFilePath := strings.TrimSpace(c.PostForm("log_file_path"))
 	if logFilePath == "" {
-		logFilePath = "/var/log/dns-rpz/dns-rpz.log"
+		logFilePath = "/var/log/rpzd/rpzd.log"
 	}
 
 	logRotate := "false"
@@ -348,28 +361,28 @@ func (s *Server) handleSettingsSaveLogging(c *gin.Context) {
 	}
 
 	kvs := map[string]string{
-		"log_level":        logLevel,
-		"log_format":       logFormat,
-		"log_file":         logFile,
-		"log_file_path":    logFilePath,
-		"log_rotate":       logRotate,
-		"log_rotate_size":  logRotateSize,
-		"log_rotate_keep":  logRotateKeep,
+		"log_level":       logLevel,
+		"log_format":      logFormat,
+		"log_file":        logFile,
+		"log_file_path":   logFilePath,
+		"log_rotate":      logRotate,
+		"log_rotate_size": logRotateSize,
+		"log_rotate_keep": logRotateKeep,
 	}
 	if err := saveSettingsMap(ctx, s, kvs); err != nil {
 		s.renderError(c, http.StatusInternalServerError, "Failed to save settings", err)
 		return
 	}
 
-	// Write or remove /etc/logrotate.d/dns-rpz
+	// Write or remove /etc/logrotate.d/rpzd
 	if logRotate == "true" && logFile == "true" {
 		if err := writeLogrotateConfig(logFilePath, logRotateSize, logRotateKeep); err != nil {
 			s.logger.Warn("failed to write logrotate config (requires root)", "err", err)
 		} else {
-			s.logger.Info("logrotate config written", "path", "/etc/logrotate.d/dns-rpz")
+			s.logger.Info("logrotate config written", "path", "/etc/logrotate.d/rpzd")
 		}
 	} else {
-		if err := os.Remove("/etc/logrotate.d/dns-rpz"); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove("/etc/logrotate.d/rpzd"); err != nil && !os.IsNotExist(err) {
 			s.logger.Warn("failed to remove logrotate config", "err", err)
 		}
 	}
@@ -410,20 +423,20 @@ func (s *Server) handleSettingsClearLog(c *gin.Context) {
 
 	if !settings.LogFile {
 		c.HTML(http.StatusBadRequest, "settings.html", gin.H{
-			"User":           currentUser(c),
-			"CSRFToken":      csrfToken(c),
-			"ActivePage":     "settings",
-			"ActiveSubPage":  "general",
-			"Tab":            "general",
-			"Settings":       settings,
-			"ErrorLogging":   "Log file is not enabled. Enable log file output first.",
+			"User":          currentUser(c),
+			"CSRFToken":     csrfToken(c),
+			"ActivePage":    "settings",
+			"ActiveSubPage": "general",
+			"Tab":           "general",
+			"Settings":      settings,
+			"ErrorLogging":  "Log file is not enabled. Enable log file output first.",
 		})
 		return
 	}
 
 	logFilePath := settings.LogFilePath
 	if logFilePath == "" {
-		logFilePath = "/var/log/dns-rpz/dns-rpz.log"
+		logFilePath = "/var/log/rpzd/rpzd.log"
 	}
 
 	if err := os.Truncate(logFilePath, 0); err != nil {
@@ -440,7 +453,7 @@ func (s *Server) handleSettingsClearLog(c *gin.Context) {
 	c.Redirect(http.StatusFound, "/settings?tab=general&saved=log_cleared")
 }
 
-// writeLogrotateConfig writes a logrotate config file for dns-rpz to /etc/logrotate.d/dns-rpz.
+// writeLogrotateConfig writes a logrotate config file for rpzd to /etc/logrotate.d/rpzd.
 func writeLogrotateConfig(logFilePath, size, keepStr string) error {
 	keep := 7
 	fmt.Sscanf(keepStr, "%d", &keep)
@@ -456,6 +469,5 @@ func writeLogrotateConfig(logFilePath, size, keepStr string) error {
     su root adm
 }
 `, logFilePath, size, keep)
-	return os.WriteFile("/etc/logrotate.d/dns-rpz", []byte(content), 0644)
+	return os.WriteFile("/etc/logrotate.d/rpzd", []byte(content), 0644)
 }
-

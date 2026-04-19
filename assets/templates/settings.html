@@ -1,6 +1,6 @@
 {{template "base.html" .}}
 
-{{define "title"}}Settings — DNS-RPZ{{end}}
+{{define "title"}}Settings — rpzd{{end}}
 
 {{define "content"}}
 <div class="max-w-2xl mx-auto space-y-6">
@@ -44,7 +44,7 @@
         </div>
 
         <div class="p-3 rounded-lg border border-blue-100 bg-blue-50 text-xs text-blue-700 space-y-0.5">
-          <p class="font-semibold">HTTPS is always enabled. Certificate paths (set in <code class="bg-blue-100 px-1 rounded mono">dns-rpz.conf</code>):</p>
+          <p class="font-semibold">HTTPS is always enabled. Certificate paths (set in <code class="bg-blue-100 px-1 rounded mono">rpzd.conf</code>):</p>
           <p class="mono">TLS_CERT_FILE — default: <span class="font-medium">./certs/server.crt</span></p>
           <p class="mono">TLS_KEY_FILE  — default: <span class="font-medium">./certs/server.key</span></p>
           <p class="mt-1 text-blue-600">Self-signed cert is generated automatically if the files do not exist. Browsers will show a security warning — this is normal.</p>
@@ -140,7 +140,7 @@
             <option value="warn"   {{if eq .Settings.LogLevel "warn"}}selected{{end}}>warn</option>
             <option value="error"  {{if eq .Settings.LogLevel "error"}}selected{{end}}>error</option>
           </select>
-          <p class="form-hint">Applied immediately to both services via SIGHUP. <code class="bg-gray-100 px-1 rounded mono">LOG_LEVEL</code> in <code class="bg-gray-100 px-1 rounded mono">dns-rpz.conf</code> controls the bootstrap level only (before DB is ready).</p>
+          <p class="form-hint">Applied immediately to both services via SIGHUP. <code class="bg-gray-100 px-1 rounded mono">LOG_LEVEL</code> in <code class="bg-gray-100 px-1 rounded mono">rpzd.conf</code> controls the bootstrap level only (before DB is ready).</p>
         </div>
 
         <!-- Log Format -->
@@ -180,7 +180,7 @@
           <div x-show="logFile" class="mt-4">
             <label class="form-label">Log File Path</label>
             <input type="text" name="log_file_path" value="{{.Settings.LogFilePath}}"
-                   placeholder="/var/log/dns-rpz/dns-rpz.log" class="form-input mono"/>
+                   placeholder="/var/log/rpzd/rpzd.log" class="form-input mono"/>
             <p class="form-hint">Directory is created automatically if it does not exist.</p>
           </div>
         </div>
@@ -190,7 +190,7 @@
           <div class="flex items-center justify-between">
             <div>
               <label class="form-label mb-0">Log Rotation</label>
-              <p class="form-hint mt-0.5">Write <code class="bg-gray-100 px-1 rounded mono">/etc/logrotate.d/dns-rpz</code> (requires root).</p>
+              <p class="form-hint mt-0.5">Write <code class="bg-gray-100 px-1 rounded mono">/etc/logrotate.d/rpzd</code> (requires root).</p>
             </div>
             <button type="button" @click="logRotate = !logRotate"
               :class="logRotate ? 'bg-blue-600' : 'bg-gray-200'"
@@ -452,6 +452,28 @@
         </div>
 
         <div class="divider"></div>
+
+        <!-- Response Rate Limiting (RRL) -->
+        <div>
+          <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">Response Rate Limiting (RRL)</p>
+          <p class="form-hint mb-3">Limits queries per second from a single IP using a token bucket. Protects against DNS amplification attacks. Set to <code class="bg-gray-100 px-1 rounded mono">0</code> to disable. Changes take effect immediately without restart.</p>
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="form-label">Rate (queries/sec per IP)</label>
+              <input type="number" name="rrl_rate" value="{{.Settings.RRLRate}}"
+                     min="0" class="form-input"/>
+              <p class="form-hint">Sustained query rate allowed per client IP. 0 = disabled.</p>
+            </div>
+            <div>
+              <label class="form-label">Burst</label>
+              <input type="number" name="rrl_burst" value="{{.Settings.RRLBurst}}"
+                     min="0" class="form-input"/>
+              <p class="form-hint">Max burst of queries above the rate limit. 0 = disabled.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider"></div>
         <div class="flex items-center gap-3">
           <button type="submit" class="btn btn-primary">Save DNS Settings</button>
           {{if eq .Saved "dns"}}
@@ -468,7 +490,7 @@
 
   <div class="p-4 rounded-xl border border-amber-200 bg-amber-50 text-sm text-amber-800">
     <strong class="font-semibold">Note:</strong> Bootstrap settings (DNS_ADDRESS, DATABASE_DSN, TLS_CERT_FILE, etc.) are managed via
-    <code class="bg-amber-100 px-1.5 py-0.5 rounded text-xs mono">dns-rpz.conf</code> and require a service restart.
+    <code class="bg-amber-100 px-1.5 py-0.5 rounded text-xs mono">rpzd.conf</code> and require a service restart.
   </div>
 </div>
 {{end}}

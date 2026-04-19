@@ -1,6 +1,6 @@
 {{template "base.html" .}}
 
-{{define "title"}}Trust Network — DNS-RPZ{{end}}
+{{define "title"}}Trust Network — rpzd{{end}}
 
 {{define "content"}}
 <div class="max-w-7xl mx-auto">
@@ -35,7 +35,7 @@
     <h2 class="text-lg font-semibold text-slate-700 mb-2">Trust Network Not Active</h2>
     <p class="text-sm text-slate-500 mb-4">
       This node has not joined a trust network yet.<br>
-      Set <code class="bg-slate-100 px-1 rounded">NODE_BOOTSTRAP_IP</code> in <code class="bg-slate-100 px-1 rounded">dns-rpz.conf</code>
+      Set <code class="bg-slate-100 px-1 rounded">NODE_BOOTSTRAP_IP</code> in <code class="bg-slate-100 px-1 rounded">rpzd.conf</code>
       and restart the service to begin the join process.
     </p>
     <p class="text-xs text-slate-400">Or set <code class="bg-slate-100 px-1 rounded">NODE_ROLE=genesis</code> to create a new network.</p>
